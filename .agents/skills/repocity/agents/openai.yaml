@@ -1,0 +1,4 @@
+interface:
+  display_name: "RepoCity"
+  short_description: "Build animated 3D cities from Git history"
+  default_prompt: "Use $repocity to build a standalone animated code city for this repository."

@@ -1,0 +1,7 @@
+node_modules/
+dist/
+__pycache__/
+*.pyc
+.DS_Store
+public/data/*.json
+!public/data/example-replay.json

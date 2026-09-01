@@ -1,0 +1,31 @@
+{
+  "title": "RepoCity",
+  "subtitle": "A replayable city built from Git history",
+  "dataUrl": "/data/replay.json",
+  "city": {
+    "layout": "files",
+    "blockLines": 100,
+    "alleyWidth": 1.55,
+    "speed": "turbo",
+    "effectPace": "brief",
+    "camera": "aerial",
+    "autoRotate": false
+  },
+  "theme": {
+    "accent": "#4fd1c5",
+    "source": "#756cc1",
+    "test": "#d5a248",
+    "add": "#35d5ff",
+    "remove": "#ff63c5",
+    "sky": "#0c111d"
+  },
+  "classification": {
+    "testPatterns": ["(^|/)(tests?|__tests__)(/|$)", "(^|/)test_[^/]*\\.py$", "_test\\.py$", "\\.(test|spec)\\.[^./]+$"],
+    "fixturePatterns": ["(^|/)(fixtures?|mockdata|snapshots?|__snapshots__)(/|$)"],
+    "generatedPatterns": ["(^|/)(generated|dist|build|coverage|vendor)(/|$)", "(^|/)(package-lock\\.json|yarn\\.lock|pnpm-lock\\.yaml|uv\\.lock)$", "\\.min\\.(js|css)$", "\\.map$"],
+    "docPatterns": ["\\.(md|mdx|rst)$"],
+    "sourcePatterns": ["\\.(py|pyi|ts|tsx|js|jsx|css|scss|sass|html|sh|bash|zsh|sql|tf|hcl|go|rs|c|cc|cpp|h|hpp|java|kt|rb|php|vue|svelte)$", "(^|/)(dockerfile|makefile)$"],
+    "agentIdentityPatterns": ["anthropic", "openai", "cursor\\.com", "cursoragent", "^claude\\b", "^codex\\b", "^cursor agent\\b"],
+    "automationIdentityPatterns": ["dependabot", "renovate", "github-actions", "\\[bot\\]", "bot@"]
+  }
+}

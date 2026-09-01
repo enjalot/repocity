@@ -1,0 +1,33 @@
+{
+  "name": "repocity",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "data": "python3 scripts/build_replay.py",
+    "test:data": "python3 -m unittest discover -s tests -p 'test_*.py'",
+    "dev": "vite",
+    "dev:lan": "vite --host 0.0.0.0",
+    "build": "tsc -p tsconfig.json && vite build",
+    "typecheck": "tsc -p tsconfig.json",
+    "preview": "vite preview"
+  },
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
+  "dependencies": {
+    "d3": "7.9.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "three": "0.185.1"
+  },
+  "devDependencies": {
+    "@types/d3": "7.4.3",
+    "@types/react": "18.3.29",
+    "@types/react-dom": "18.3.7",
+    "@types/three": "0.185.4",
+    "@vitejs/plugin-react": "6.1.1",
+    "typescript": "5.9.3",
+    "vite": "8.2.2"
+  }
+}
