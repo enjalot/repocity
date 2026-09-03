@@ -6,6 +6,7 @@
   "scripts": {
     "data": "python3 scripts/build_replay.py",
     "test:data": "python3 -m unittest discover -s tests -p 'test_*.py'",
+    "test:report": "node --test tests/test_markdown_report.mjs",
     "dev": "vite",
     "dev:lan": "vite --host 0.0.0.0",
     "build": "tsc -p tsconfig.json && vite build",
