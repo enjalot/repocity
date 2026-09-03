@@ -4,6 +4,7 @@ import {
   WORLD_HEIGHT,
   WORLD_WIDTH,
   cityDeltas,
+  firstAppearanceByPath,
   pointOnRoute,
   type CityLayout,
   type CityLot,
@@ -62,6 +63,7 @@ type BuildingSlot = {
   mesh: THREE.InstancedMesh
   instanceId: number
   bounds: LotBounds
+  state: 'future' | 'present' | 'deleted'
 }
 
 type LaserDirection = 'add' | 'remove'
@@ -441,6 +443,7 @@ export class ThreeCityScene {
   private readonly sourceLots: CityLot[]
   private readonly testLots: CityLot[]
   private readonly slots = new Map<number, BuildingSlot>()
+  private readonly firstAppearance: Int32Array
   private readonly workers: Worker[]
   private readonly raycaster = new THREE.Raycaster()
   private readonly pointer = new THREE.Vector2()
@@ -452,6 +455,8 @@ export class ThreeCityScene {
   private averageBuildingSpan = 0.25
   private lines: Float64Array
   private blockLines = 100
+  private stateEventIndex = -1
+  private targetEventIndex = -1
   private activeDeltas: ReturnType<typeof cityDeltas> = []
   private readonly trailEffects: TrailEffect[] = []
   private readonly burstEffects: LaserBurstEffect[] = []
@@ -463,6 +468,7 @@ export class ThreeCityScene {
     canvas: HTMLCanvasElement,
     layout: CityLayout,
     paths: ReplayPath[],
+    events: ReplayEvent[],
     colors: ThreeSceneColors,
     alleyWidth: number,
   ) {
@@ -473,6 +479,7 @@ export class ThreeCityScene {
     this.addLaserColor = new THREE.Color(colors.add)
     this.removeLaserColor = new THREE.Color(colors.remove)
     this.lines = new Float64Array(paths.length)
+    this.firstAppearance = firstAppearanceByPath(events, paths.length)
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false, powerPreference: 'high-performance' })
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping
@@ -532,6 +539,8 @@ export class ThreeCityScene {
     this.scene.add(this.sourceMesh, this.testMesh)
     this.indexLots(this.sourceMesh, this.sourceLots)
     this.indexLots(this.testMesh, this.testLots)
+    for (const lot of this.layout.lots) this.setBuilding(lot.pathId, 0)
+    this.flushInstances(true)
     const buildingDimensions = [...this.slots.values()].flatMap(({ bounds }) => [bounds.width, bounds.depth])
     if (buildingDimensions.length) {
       this.averageBuildingSpan = buildingDimensions.reduce((sum, value) => sum + value, 0) / buildingDimensions.length
@@ -582,7 +591,13 @@ export class ThreeCityScene {
 
   private indexLots(mesh: THREE.InstancedMesh, lots: CityLot[]) {
     lots.forEach((lot, instanceId) => {
-      this.slots.set(lot.pathId, { lot, mesh, instanceId, bounds: this.bounds(lot) })
+      this.slots.set(lot.pathId, {
+        lot,
+        mesh,
+        instanceId,
+        bounds: this.bounds(lot),
+        state: 'future',
+      })
     })
   }
 
@@ -593,6 +608,16 @@ export class ThreeCityScene {
   private setBuilding(pathId: number, lines: number) {
     const slot = this.slots.get(pathId)
     if (!slot) return
+    const future = lines <= 0 && this.stateEventIndex < this.firstAppearance[pathId]
+    slot.state = future ? 'future' : lines > 0 ? 'present' : 'deleted'
+    if (future) {
+      this.dummy.position.set(slot.bounds.x, 0, slot.bounds.z)
+      this.dummy.scale.set(0, 0, 0)
+      this.dummy.rotation.set(0, 0, 0)
+      this.dummy.updateMatrix()
+      slot.mesh.setMatrixAt(slot.instanceId, this.dummy.matrix)
+      return
+    }
     const height = this.heightFor(lines)
     this.dummy.position.set(slot.bounds.x, height / 2, slot.bounds.z)
     this.dummy.scale.set(slot.bounds.width, height, slot.bounds.depth)
@@ -614,9 +639,11 @@ export class ThreeCityScene {
     }
   }
 
-  setState(lines: Float64Array, blockLines: number) {
+  setState(lines: Float64Array, blockLines: number, eventIndex: number) {
     this.lines = new Float64Array(lines)
     this.blockLines = blockLines
+    this.stateEventIndex = eventIndex
+    this.targetEventIndex = eventIndex
     for (const lot of this.layout.lots) this.setBuilding(lot.pathId, this.lines[lot.pathId] ?? 0)
     this.flushInstances(true)
     this.refreshHover()
@@ -961,6 +988,7 @@ export class ThreeCityScene {
     before: Float64Array,
     after: Float64Array,
     event: ReplayEvent,
+    eventIndex: number,
     blockLines: number,
     effectDuration: number,
     showWorkers: boolean,
@@ -971,7 +999,8 @@ export class ThreeCityScene {
     this.activeDeltas = cityDeltas(this.layout, before, after)
     const allActions = collectLaserActions(this.layout, before, after, event)
     const actions = selectWorkerLaserActions(allActions)
-    this.setState(before, blockLines)
+    this.setState(before, blockLines, eventIndex - 1)
+    this.targetEventIndex = eventIndex
     const authorColor = new THREE.Color(workerColor(event, this.colors))
     if (effectDuration > 0 && this.lastSpawnedSha !== event.sha) {
       const detailedActions = actions.slice(0, detailedEffectLimit)
@@ -1010,6 +1039,14 @@ export class ThreeCityScene {
       this.setBuilding(delta.lot.pathId, lines)
     })
     if (this.activeDeltas.length) this.flushInstances(true)
+
+    if (progress >= 1 && this.stateEventIndex !== this.targetEventIndex) {
+      this.stateEventIndex = this.targetEventIndex
+      for (const lot of this.layout.lots) {
+        if ((this.lines[lot.pathId] ?? 0) <= 0) this.setBuilding(lot.pathId, 0)
+      }
+      this.flushInstances(true)
+    }
 
     this.workers.forEach((worker, index) => {
       const action = worker.action
@@ -1050,6 +1087,10 @@ export class ThreeCityScene {
     if (this.hoveredPathId === null) return
     const slot = this.slots.get(this.hoveredPathId)
     if (!slot) return
+    if (slot.state === 'future') {
+      this.hoverOutline.visible = false
+      return
+    }
     const height = this.heightFor(this.lines[this.hoveredPathId] ?? 0)
     this.hoverOutline.position.set(slot.bounds.x, height / 2, slot.bounds.z)
     this.hoverOutline.scale.set(slot.bounds.width + 0.045, height + 0.045, slot.bounds.depth + 0.045)
@@ -1062,6 +1103,7 @@ export class ThreeCityScene {
     let closest: BuildingSlot | null = null
     let closestDistance = Infinity
     for (const slot of this.slots.values()) {
+      if (slot.state === 'future') continue
       const lines = this.lines[slot.lot.pathId] ?? 0
       const distance = rayBoxDistance(this.raycaster.ray, slot.bounds, this.heightFor(lines))
       if (distance !== null && distance < closestDistance) {
@@ -1081,6 +1123,11 @@ export class ThreeCityScene {
 
   linesForPath(pathId: number) {
     return this.lines[pathId] ?? 0
+  }
+
+  isPathVisible(pathId: number) {
+    const slot = this.slots.get(pathId)
+    return Boolean(slot && slot.state !== 'future')
   }
 
   clearHover() {

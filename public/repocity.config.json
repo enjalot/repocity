@@ -4,6 +4,7 @@
   "dataUrl": "/data/replay.json",
   "city": {
     "layout": "files",
+    "neighborhoodDepth": 1,
     "blockLines": 100,
     "alleyWidth": 1.55,
     "speed": "turbo",
@@ -15,6 +16,7 @@
     "accent": "#4fd1c5",
     "source": "#756cc1",
     "test": "#d5a248",
+    "deleted": "#151b27",
     "add": "#35d5ff",
     "remove": "#ff63c5",
     "sky": "#0c111d"

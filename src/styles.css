@@ -11,7 +11,7 @@
   --removal: #ff86c8;
   --city3-source: #756cc1;
   --city3-test: #d5a248;
-  --city3-empty: #333b4d;
+  --city3-empty: #151b27;
   --city3-ground: #101521;
   --city3-district: #20293a;
   --city3-road: #0b101b;
@@ -73,6 +73,7 @@ h1 { margin: 0.25rem 0 0; font-size: clamp(2.4rem, 7vw, 5.4rem); line-height: 0.
 .legend span::before { content: ''; display: inline-block; width: 0.62rem; height: 0.62rem; margin-right: 0.25rem; border-radius: 1px; vertical-align: -0.05rem; }
 .legend .source::before { background: var(--city3-source); }
 .legend .test::before { background: var(--city3-test); }
+.legend .deleted::before { background: var(--city3-empty); }
 .legend .add::before { width: 0.14rem; background: var(--city3-add); box-shadow: 0 0 5px var(--city3-add); }
 .legend .remove::before { width: 0.14rem; background: var(--city3-remove); box-shadow: 0 0 5px var(--city3-remove); }
 .loading, .empty-state { display: grid; place-items: center; min-height: 38rem; color: var(--muted); }
@@ -82,6 +83,8 @@ h1 { margin: 0.25rem 0 0; font-size: clamp(2.4rem, 7vw, 5.4rem); line-height: 0.
 .scrubber { display: grid; grid-template-columns: auto minmax(8rem, 1fr) auto; align-items: center; gap: 0.7rem; margin-top: 0.55rem; color: var(--muted); font-size: 0.72rem; }
 .scrubber-actions { display: flex; gap: 0.75rem; white-space: nowrap; }
 .scrubber button { appearance: none; border: 0; color: var(--accent); background: transparent; padding: 0; }
+.scrubber .playback-button { min-width: 4.4rem; border: 1px solid color-mix(in srgb, var(--accent) 72%, #fff); border-radius: 0.38rem; padding: 0.42rem 0.82rem; color: #071214; background: var(--accent); box-shadow: 0 0 0 1px rgba(7, 18, 20, 0.35) inset, 0 3px 12px color-mix(in srgb, var(--accent) 22%, transparent); font-weight: 760; }
+.scrubber .playback-button:hover, .scrubber .playback-button:focus-visible { color: #020708; filter: brightness(1.12); }
 .scrubber input { width: 100%; accent-color: var(--accent); }
 .speed-controls { margin-top: 0.55rem; }
 

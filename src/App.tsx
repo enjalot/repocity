@@ -17,6 +17,7 @@ type RepoCityConfig = {
   dataUrl: string
   city: {
     layout: CityLayoutMode
+    neighborhoodDepth: number
     blockLines: number
     alleyWidth: number
     speed: Speed
@@ -28,6 +29,7 @@ type RepoCityConfig = {
     accent: string
     source: string
     test: string
+    deleted: string
     add: string
     remove: string
     sky: string
@@ -109,6 +111,7 @@ const FALLBACK_CONFIG: RepoCityConfig = {
   dataUrl: '/data/replay.json',
   city: {
     layout: 'files',
+    neighborhoodDepth: 1,
     blockLines: 100,
     alleyWidth: 1.55,
     speed: 'turbo',
@@ -120,6 +123,7 @@ const FALLBACK_CONFIG: RepoCityConfig = {
     accent: '#4fd1c5',
     source: '#756cc1',
     test: '#d5a248',
+    deleted: '#151b27',
     add: '#35d5ff',
     remove: '#ff63c5',
     sky: '#0c111d',
@@ -211,6 +215,9 @@ export default function App() {
   const [speed, setSpeed] = useState<Speed>(FALLBACK_CONFIG.city.speed)
   const [effectPace, setEffectPace] = useState<EffectPace>(FALLBACK_CONFIG.city.effectPace)
   const [layoutMode, setLayoutMode] = useState<CityLayoutMode>(FALLBACK_CONFIG.city.layout)
+  const [neighborhoodDepth, setNeighborhoodDepth] = useState(
+    FALLBACK_CONFIG.city.neighborhoodDepth,
+  )
   const [cameraPreset, setCameraPreset] = useState<CameraPreset>(FALLBACK_CONFIG.city.camera)
   const [blockLines, setBlockLines] = useState(FALLBACK_CONFIG.city.blockLines)
   const [autoTurn, setAutoTurn] = useState(FALLBACK_CONFIG.city.autoRotate)
@@ -223,13 +230,20 @@ export default function App() {
     async function load() {
       try {
         const configResponse = await fetch('/repocity.config.json', { signal: controller.signal })
-        const nextConfig = configResponse.ok
-          ? { ...FALLBACK_CONFIG, ...(await configResponse.json()) } as RepoCityConfig
-          : FALLBACK_CONFIG
+        const loadedConfig = configResponse.ok
+          ? await configResponse.json() as Partial<RepoCityConfig>
+          : {}
+        const nextConfig: RepoCityConfig = {
+          ...FALLBACK_CONFIG,
+          ...loadedConfig,
+          city: { ...FALLBACK_CONFIG.city, ...loadedConfig.city },
+          theme: { ...FALLBACK_CONFIG.theme, ...loadedConfig.theme },
+        }
         setConfig(nextConfig)
         setSpeed(nextConfig.city.speed)
         setEffectPace(nextConfig.city.effectPace)
         setLayoutMode(nextConfig.city.layout)
+        setNeighborhoodDepth(nextConfig.city.neighborhoodDepth)
         setCameraPreset(nextConfig.city.camera)
         setBlockLines(nextConfig.city.blockLines)
         setAutoTurn(nextConfig.city.autoRotate)
@@ -252,8 +266,8 @@ export default function App() {
   }, [])
 
   const layout = useMemo(
-    () => (replay ? buildCityLayout(replay.paths, layoutMode) : null),
-    [layoutMode, replay],
+    () => (replay ? buildCityLayout(replay.paths, layoutMode, neighborhoodDepth) : null),
+    [layoutMode, neighborhoodDepth, replay],
   )
   const event = replay?.events[eventIndex]
   const fileStats = useMemo(
@@ -270,11 +284,18 @@ export default function App() {
     setHover(null)
     import('./city/threeScene').then(({ ThreeCityScene: Scene }) => {
       if (cancelled) return
-      created = new Scene(canvas, layout, replay.paths, sceneColors(canvas), config.city.alleyWidth)
+      created = new Scene(
+        canvas,
+        layout,
+        replay.paths,
+        replay.events,
+        sceneColors(canvas),
+        config.city.alleyWidth,
+      )
       sceneRef.current = created
       created.setSize(width, height)
       created.setView(cameraPreset)
-      created.setState(reconstruct(replay, eventIndex), blockLines)
+      created.setState(reconstruct(replay, eventIndex), blockLines, eventIndex)
       setSceneVersion((version) => version + 1)
     }).catch((cause: unknown) => {
       if (!cancelled) setError(cause instanceof Error ? cause.message : 'Could not start WebGL')
@@ -300,6 +321,7 @@ export default function App() {
       before,
       after,
       event,
+      eventIndex,
       blockLines,
       playing && !reducedMotion() ? EFFECT_DURATION[effectPace] : 0,
       showWorkers,
@@ -308,11 +330,11 @@ export default function App() {
     )
     if (!playing) {
       scene.updateEvent(1)
-      setHover((current) => current ? {
-        ...current,
-        lines: scene.linesForPath(current.pathId),
-        blocks: scene.linesForPath(current.pathId) / blockLines,
-      } : current)
+      setHover((current) => current && scene.isPathVisible(current.pathId) ? {
+          ...current,
+          lines: scene.linesForPath(current.pathId),
+          blocks: scene.linesForPath(current.pathId) / blockLines,
+        } : null)
       scene.render()
       return
     }
@@ -325,11 +347,11 @@ export default function App() {
       scene.updateEvent(progress)
       if (now - lastHoverUpdate > 80) {
         lastHoverUpdate = now
-        setHover((current) => current ? {
-          ...current,
-          lines: scene.linesForPath(current.pathId),
-          blocks: scene.linesForPath(current.pathId) / blockLines,
-        } : current)
+        setHover((current) => current && scene.isPathVisible(current.pathId) ? {
+            ...current,
+            lines: scene.linesForPath(current.pathId),
+            blocks: scene.linesForPath(current.pathId) / blockLines,
+          } : null)
       }
       scene.turntableFrame()
       if (progress < 1) {
@@ -418,6 +440,7 @@ export default function App() {
     '--accent': config.theme.accent,
     '--city3-source': config.theme.source,
     '--city3-test': config.theme.test,
+    '--city3-empty': config.theme.deleted,
     '--city3-add': config.theme.add,
     '--city3-remove': config.theme.remove,
     '--city3-sky': config.theme.sky,
@@ -456,7 +479,6 @@ export default function App() {
             <button aria-label="Zoom out" onClick={() => sceneRef.current?.zoomBy(0.82)}>−</button>
             <button aria-label="Zoom in" onClick={() => sceneRef.current?.zoomBy(1.22)}>+</button>
             <button className={autoTurn ? 'active' : ''} onClick={() => setAutoTurn((current) => !current)}>Turntable</button>
-            <button onClick={() => sceneRef.current?.resetView()}>Reset</button>
           </div>
           <div className="control-group">
             <span>Layout</span>
@@ -464,6 +486,21 @@ export default function App() {
               <button key={value} className={layoutMode === value ? 'active' : ''} onClick={() => { setPlaying(false); setLayoutMode(value) }}>{label}</button>
             ))}
           </div>
+          <label className="select-control">
+            Neighborhoods
+            <select
+              aria-label="Neighborhood folder depth"
+              value={neighborhoodDepth}
+              onChange={(change) => {
+                setPlaying(false)
+                setNeighborhoodDepth(Number(change.target.value))
+              }}
+            >
+              <option value={1}>1 folder deep</option>
+              <option value={2}>2 folders deep</option>
+              <option value={3}>3 folders deep</option>
+            </select>
+          </label>
           <label className="select-control">
             Lines / block
             <select value={blockLines} onChange={(change) => setBlockLines(Number(change.target.value))}>
@@ -474,7 +511,10 @@ export default function App() {
             </select>
           </label>
         </div>
-        <p className="layout-note">{layoutNote}</p>
+        <p className="layout-note">
+          {layoutNote} Neighborhoods group files by their first {neighborhoodDepth}{' '}
+          {neighborhoodDepth === 1 ? 'folder' : 'folders'} without changing replay data.
+        </p>
 
         {replay && event ? (
           <>
@@ -509,7 +549,7 @@ export default function App() {
                     </>
                   ) : (
                     <>
-                      <span>not present at this commit</span>
+                      <span>deleted by this commit · 0 lines</span>
                       <span>{hover.category} · historical peak {formatNumber(hover.peakLoc)} lines</span>
                     </>
                   )}
@@ -518,6 +558,7 @@ export default function App() {
               <div className="legend" aria-hidden="true">
                 <span className="source">source</span>
                 <span className="test">tests</span>
+                <span className="deleted">deleted</span>
                 <span className="add">add</span>
                 <span className="remove">remove</span>
               </div>
@@ -527,7 +568,13 @@ export default function App() {
             <div className="scrubber">
               <div className="scrubber-actions">
                 <button onClick={() => { setPlaying(false); setEventIndex(0) }}>Restart</button>
-                <button onClick={() => playing ? setPlaying(false) : play()}>{playing ? 'Pause' : 'Play'}</button>
+                <button
+                  className="playback-button"
+                  aria-pressed={playing}
+                  onClick={() => playing ? setPlaying(false) : play()}
+                >
+                  {playing ? 'Pause' : 'Play'}
+                </button>
               </div>
               <input
                 aria-label="Replay commit"

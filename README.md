@@ -72,7 +72,7 @@ The builder verifies reconstructed text LOC against the selected final Git tree.
 
 Copy [template/repocity.config.json](template/repocity.config.json) over `public/repocity.config.json`, then edit:
 
-- title, subtitle, palette, default camera, animation speed, block size, and alley width;
+- title, subtitle, palette, default camera, animation speed, block size, alley width, and neighborhood depth;
 - source/test/fixture/generated path classifiers;
 - explicit agent and automation identity patterns.
 

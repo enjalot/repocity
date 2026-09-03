@@ -99,6 +99,7 @@ export type CityLayout = {
   gate: Point
   gates: Point[]
   mode: CityLayoutMode
+  neighborhoodDepth: number
   lots: CityLot[]
   lotByPath: Map<number, CityLot>
   districts: CityDistrict[]
@@ -107,30 +108,25 @@ export type CityLayout = {
 export const WORLD_WIDTH = 760
 export const WORLD_HEIGHT = 470
 
-function makeTree(paths: ReplayPath[]): TreeDatum {
+function makeTree(paths: ReplayPath[], neighborhoodDepth: number): TreeDatum {
   const root: TreeDatum = { name: 'root', path: '', peakLoc: 0, children: [] }
-  const directories = new Map<string, TreeDatum>([['', root]])
+  const neighborhoods = new Map<string, TreeDatum>()
   for (const item of paths) {
     if ((item.category !== 'source' && item.category !== 'test') || item.peakLoc <= 0) continue
     const parts = item.path.split('/')
-    let parent = root
-    let prefix = ''
-    for (let index = 0; index < parts.length - 1; index += 1) {
-      prefix = prefix ? `${prefix}/${parts[index]}` : parts[index]
-      let directory = directories.get(prefix)
-      if (!directory) {
-        directory = {
-          name: parts[index],
-          path: prefix,
-          peakLoc: 0,
-          children: [],
-        }
-        directories.set(prefix, directory)
-        parent.children?.push(directory)
+    const neighborhoodPath = parts.slice(0, -1).slice(0, neighborhoodDepth).join('/')
+    let neighborhood = neighborhoods.get(neighborhoodPath)
+    if (!neighborhood) {
+      neighborhood = {
+        name: neighborhoodPath || '(root)',
+        path: neighborhoodPath,
+        peakLoc: 0,
+        children: [],
       }
-      parent = directory
+      neighborhoods.set(neighborhoodPath, neighborhood)
+      root.children?.push(neighborhood)
     }
-    parent.children?.push({
+    neighborhood.children?.push({
       name: parts[parts.length - 1],
       path: item.path,
       peakLoc: Math.max(1, item.peakLoc),
@@ -165,9 +161,14 @@ function closestGate(gates: Point[], target: Point) {
   return d3.least(gates, (gate) => Math.hypot(target.x - gate.x, target.y - gate.y)) ?? gates[0]
 }
 
-export function buildCityLayout(paths: ReplayPath[], mode: CityLayoutMode = 'peak'): CityLayout {
+export function buildCityLayout(
+  paths: ReplayPath[],
+  mode: CityLayoutMode = 'peak',
+  requestedNeighborhoodDepth = 1,
+): CityLayout {
+  const neighborhoodDepth = Math.max(1, Math.min(3, Math.round(requestedNeighborhoodDepth)))
   const tree = d3
-    .hierarchy<TreeDatum>(makeTree(paths))
+    .hierarchy<TreeDatum>(makeTree(paths, neighborhoodDepth))
     .sum((datum) => layoutValue(datum, mode))
     .sort((a, b) => (b.value ?? 0) - (a.value ?? 0) || d3.ascending(a.data.path, b.data.path))
 
@@ -241,7 +242,39 @@ export function buildCityLayout(paths: ReplayPath[], mode: CityLayoutMode = 'pea
     x1: node.x1,
     y1: node.y1,
   }))
-  return { width: WORLD_WIDTH, height: WORLD_HEIGHT, gate, gates, mode, lots, lotByPath, districts }
+  return {
+    width: WORLD_WIDTH,
+    height: WORLD_HEIGHT,
+    gate,
+    gates,
+    mode,
+    neighborhoodDepth,
+    lots,
+    lotByPath,
+    districts,
+  }
+}
+
+export function firstAppearanceByPath(events: ReplayEvent[], pathCount: number): Int32Array {
+  const unseen = 2_147_483_647
+  const firstAppearance = new Int32Array(pathCount)
+  firstAppearance.fill(unseen)
+  events.forEach((event, eventIndex) => {
+    for (const [pathId, , , status, oldPathId] of event.changes) {
+      const pathAppearance = status === 3 ? Math.max(0, eventIndex - 1) : eventIndex
+      firstAppearance[pathId] = Math.min(firstAppearance[pathId], pathAppearance)
+      if (oldPathId >= 0) {
+        firstAppearance[oldPathId] = Math.min(
+          firstAppearance[oldPathId],
+          Math.max(0, eventIndex - 1),
+        )
+      }
+    }
+  })
+  for (let pathId = 0; pathId < pathCount; pathId += 1) {
+    if (firstAppearance[pathId] === unseen) firstAppearance[pathId] = 0
+  }
+  return firstAppearance
 }
 
 export function applyEvent(loc: Float64Array, event: ReplayEvent) {
