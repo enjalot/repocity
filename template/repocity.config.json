@@ -8,7 +8,6 @@
     "blockLines": 50,
     "alleyWidth": 1.55,
     "speed": "fast",
-    "effectPace": "brief",
     "camera": "isometric",
     "autoRotate": false
   },

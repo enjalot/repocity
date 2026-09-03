@@ -17,6 +17,18 @@ python3 scripts/build_replay.py https://github.com/owner/repo.git --ref HEAD
 
 Remote inputs are cloned with `--no-checkout` into a temporary directory. Git's configured credential helper handles private access. RepoCity deletes the temporary clone when generation finishes.
 
+For an exceptionally large remote, bound both the history and the product area. Treat the shallow boundary as a disclosed analytical choice:
+
+```bash
+python3 scripts/build_replay.py owner/very-large-monorepo \
+  --ref master \
+  --clone-depth 5000 \
+  --clone-filter tree:0 \
+  --include products/example
+```
+
+If the server says filtering is unsupported or starts enumerating the entire monorepo, stop. Prefer an existing local clone or a smaller authoritative subsystem mirror; do not silently replace a bounded history with a one-commit snapshot.
+
 Do not guess a branch. For a local checkout, inspect:
 
 ```bash
@@ -69,6 +81,8 @@ git diff --check
 ```
 
 Then run Vite and inspect the rendered canvas. Use `npm run dev:lan` only when another machine must reach the server; otherwise use `npm run dev`. Report the URL rather than opening a browser without the user's request.
+
+For a static demo, package validated JSON with `scripts/package_demo.py`, add its metadata to `public/demos.json`, and verify the production build under a non-root URL. Do not publish a replay generated with `--no-validate`.
 
 For effect work, inspect at least:
 

@@ -1,14 +1,13 @@
 {
   "title": "RepoCity",
   "subtitle": "A replayable city built from Git history",
-  "dataUrl": "/data/replay.json",
+  "dataUrl": "/data/latent-scope.json.gz",
   "city": {
     "layout": "files",
     "neighborhoodDepth": 3,
     "blockLines": 50,
     "alleyWidth": 1.55,
     "speed": "fast",
-    "effectPace": "brief",
     "camera": "isometric",
     "autoRotate": false
   },

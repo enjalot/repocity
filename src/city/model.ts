@@ -307,6 +307,14 @@ export function reconstruct(replay: Replay, eventIndex: number) {
   return loc
 }
 
+export function reconstructPair(replay: Replay, eventIndex: number) {
+  const before = reconstruct(replay, eventIndex - 1)
+  const after = new Float64Array(before)
+  const event = replay.events[eventIndex]
+  if (event) applyEvent(after, event)
+  return { before, after }
+}
+
 export function pointOnRoute(route: Point[], distanceFraction: number): Point {
   if (route.length === 0) return { x: 0, y: 0 }
   if (route.length === 1) return route[0]

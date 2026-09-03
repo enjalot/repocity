@@ -36,6 +36,10 @@ button { cursor: pointer; }
 .eyebrow { color: var(--accent); font-size: 0.72rem; font-weight: 750; letter-spacing: 0.16em; text-transform: uppercase; }
 h1 { margin: 0.25rem 0 0; font-size: clamp(2.4rem, 7vw, 5.4rem); line-height: 0.95; letter-spacing: -0.055em; }
 .page-header p { margin: 0.85rem 0 0; color: var(--muted); font-size: 1.05rem; }
+.demo-picker { display: inline-flex; align-items: center; gap: 0.5rem; margin-top: 1rem; color: var(--muted); font-size: 0.68rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.demo-picker select { max-width: min(24rem, 70vw); border: 1px solid var(--border); border-radius: 999px; padding: 0.42rem 1.8rem 0.42rem 0.72rem; color: #fff; background: var(--panel); font-size: 0.78rem; letter-spacing: normal; text-transform: none; }
+.page-header .demo-note { max-width: 50rem; margin-top: 0.55rem; color: var(--muted); font-size: 0.76rem; line-height: 1.45; }
+.demo-note a { color: var(--accent); text-underline-offset: 0.16em; }
 .repo-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0; border: 1px solid var(--border); border-radius: 0.75rem; background: rgba(16, 23, 37, 0.72); backdrop-filter: blur(12px); }
 .repo-summary div { padding: 0.85rem 1rem; min-width: 0; }
 .repo-summary div:nth-child(odd) { border-right: 1px solid var(--border); }

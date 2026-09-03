@@ -2,7 +2,7 @@
 
 ## Prefer config first
 
-`public/repocity.config.json` controls copy, palette, initial layout, camera, speed, effect duration, block size, alley width, path categories, and identity patterns. Regenerate replay JSON after changing anything under `classification`.
+`public/repocity.config.json` controls copy, palette, initial layout, camera, speed, block size, alley width, path categories, and identity patterns. Regenerate replay JSON after changing anything under `classification`.
 
 The source/test colors describe file roles. Add/remove colors describe actions. Keep those visual channels distinct.
 

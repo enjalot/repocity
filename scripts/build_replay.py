@@ -180,15 +180,23 @@ def run(
     return proc.stdout
 
 
-def remote_clone_args(url: str, destination: Path, ref: str) -> list[str]:
+def remote_clone_args(
+    url: str,
+    destination: Path,
+    ref: str,
+    clone_depth: int | None = None,
+    clone_filter: str = "blob:limit=1m",
+) -> list[str]:
     """Build a bandwidth-conscious clone command for a remote replay target."""
     args = [
         "git",
         "clone",
-        "--filter=blob:limit=1m",
+        f"--filter={clone_filter}",
         "--no-checkout",
         "--progress",
     ]
+    if clone_depth is not None:
+        args.extend(["--depth", str(clone_depth)])
     branch: str | None = None
     if ref == "HEAD":
         args.extend(["--single-branch", "--no-tags"])
@@ -204,10 +212,16 @@ def remote_clone_args(url: str, destination: Path, ref: str) -> list[str]:
     return args
 
 
-def clone_remote(url: str, destination: Path, ref: str) -> None:
+def clone_remote(
+    url: str,
+    destination: Path,
+    ref: str,
+    clone_depth: int | None = None,
+    clone_filter: str = "blob:limit=1m",
+) -> None:
     """Clone while leaving Git's progress visible for large repositories."""
     proc = subprocess.run(
-        remote_clone_args(url, destination, ref),
+        remote_clone_args(url, destination, ref, clone_depth, clone_filter),
         stdout=subprocess.DEVNULL,
         check=False,
     )
@@ -413,9 +427,16 @@ def looks_like_remote(source: str) -> bool:
 
 
 @contextlib.contextmanager
-def resolve_repo(source: str, ref: str = "HEAD") -> Iterator[Path]:
+def resolve_repo(
+    source: str,
+    ref: str = "HEAD",
+    clone_depth: int | None = None,
+    clone_filter: str = "blob:limit=1m",
+) -> Iterator[Path]:
     local = Path(source).expanduser()
     if local.exists():
+        if clone_depth is not None:
+            raise ValueError("--clone-depth is only valid for remote repositories")
         repo = local.resolve()
         run(["git", "rev-parse", "--git-dir"], cwd=repo)
         yield repo
@@ -429,7 +450,7 @@ def resolve_repo(source: str, ref: str = "HEAD") -> Iterator[Path]:
     )
     with tempfile.TemporaryDirectory(prefix="repocity-clone.") as raw_temp:
         destination = Path(raw_temp) / "repo"
-        clone_remote(url, destination, ref)
+        clone_remote(url, destination, ref, clone_depth, clone_filter)
         yield destination
 
 
@@ -681,6 +702,23 @@ def parse_args() -> argparse.Namespace:
         help="Exclude a Git glob from history; repeat for multiple globs.",
     )
     parser.add_argument("--checkpoint-every", type=int, default=100)
+    parser.add_argument(
+        "--clone-depth",
+        type=int,
+        help=(
+            "For a remote repository, replay only the most recent N commits from a shallow "
+            "clone. Useful for very large histories; document the resulting boundary."
+        ),
+    )
+    parser.add_argument(
+        "--clone-filter",
+        choices=("blob:limit=1m", "blob:none", "tree:0"),
+        default="blob:limit=1m",
+        help=(
+            "Partial-clone filter for remote inputs. tree:0 minimizes the initial transfer for "
+            "very large repositories but lazily fetches selected history data."
+        ),
+    )
     parser.add_argument("--pretty", action="store_true", help="Pretty-print JSON for inspection.")
     parser.add_argument("--no-validate", action="store_true", help="Skip final LOC validation.")
     return parser.parse_args()
@@ -690,10 +728,12 @@ def main() -> int:
     args = parse_args()
     if args.checkpoint_every < 1:
         raise ValueError("--checkpoint-every must be at least 1")
+    if args.clone_depth is not None and args.clone_depth < 1:
+        raise ValueError("--clone-depth must be at least 1")
     config = load_config(args.config)
     classifier = Classifier(config.get("classification") or {})
     selected_paths = pathspecs(args.include, args.exclude)
-    with resolve_repo(args.repo, args.ref) as repo:
+    with resolve_repo(args.repo, args.ref, args.clone_depth, args.clone_filter) as repo:
         name = repository_name(repo, args.name)
         replay = build_replay(
             repo,

@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import {
   buildCityLayout,
+  firstAppearanceByPath,
   reconstruct,
+  reconstructPair,
   type CityLayoutMode,
   type Replay,
   type ReplayEvent,
@@ -9,7 +11,6 @@ import {
 import type { CameraPreset, ThreeCityScene, ThreeSceneColors } from './city/threeScene'
 
 type Speed = 'inspect' | 'fast' | 'timelapse' | 'turbo' | 'warp' | 'hyper'
-type EffectPace = 'brief' | 'slow' | 'linger'
 
 type RepoCityConfig = {
   title: string
@@ -21,7 +22,6 @@ type RepoCityConfig = {
     blockLines: number
     alleyWidth: number
     speed: Speed
-    effectPace: EffectPace
     camera: CameraPreset
     autoRotate: boolean
   }
@@ -34,6 +34,19 @@ type RepoCityConfig = {
     remove: string
     sky: string
   }
+}
+
+type Demo = {
+  id: string
+  label: string
+  repository: string
+  repositoryUrl: string
+  description: string
+  dataUrl: string
+}
+
+type DemoCatalog = {
+  demos: Demo[]
 }
 
 type Hover = {
@@ -57,11 +70,7 @@ const DURATION: Record<Speed, number> = {
   hyper: BASE_COMMIT_DURATION / 200,
 }
 
-const EFFECT_DURATION: Record<EffectPace, number> = {
-  brief: 900,
-  slow: 2200,
-  linger: 4200,
-}
+const EFFECT_DURATION = 900
 
 const DETAILED_EFFECTS: Record<Speed, number> = {
   inspect: 7,
@@ -79,12 +88,6 @@ const SPEEDS: [Speed, string][] = [
   ['turbo', '32×'],
   ['warp', '100×'],
   ['hyper', '200×'],
-]
-
-const EFFECT_PACES: [EffectPace, string][] = [
-  ['brief', '0.9s'],
-  ['slow', '2.2s'],
-  ['linger', '4.2s'],
 ]
 
 const LAYOUTS: { value: CityLayoutMode; label: string; note: string }[] = [
@@ -115,7 +118,6 @@ const FALLBACK_CONFIG: RepoCityConfig = {
     blockLines: 50,
     alleyWidth: 1.55,
     speed: 'fast',
-    effectPace: 'brief',
     camera: 'isometric',
     autoRotate: false,
   },
@@ -130,11 +132,27 @@ const FALLBACK_CONFIG: RepoCityConfig = {
   },
 }
 
-function replayDataUrl(defaultUrl: string): string {
+function requestedDataset(): string | null {
   const dataset = new URLSearchParams(window.location.search).get('dataset')
-  return dataset && /^[A-Za-z0-9._-]+$/.test(dataset)
-    ? `/data/${dataset}.json`
-    : defaultUrl
+  return dataset && /^[A-Za-z0-9._-]+$/.test(dataset) ? dataset : null
+}
+
+function publicAssetUrl(value: string): string {
+  if (/^(?:[a-z]+:)?\/\//i.test(value)) return value
+  const base = new URL(import.meta.env.BASE_URL, window.location.href)
+  return new URL(value.replace(/^\/+/, ''), base).toString()
+}
+
+async function responseJson<T>(response: Response, url: string): Promise<T> {
+  const isGzipFile = new URL(url, window.location.href).pathname.endsWith('.gz')
+  if (!isGzipFile || response.headers.get('content-encoding')) {
+    return await response.json() as T
+  }
+  if (!response.body || typeof DecompressionStream === 'undefined') {
+    throw new Error('This browser cannot decompress the RepoCity demo data')
+  }
+  const decompressed = response.body.pipeThrough(new DecompressionStream('gzip'))
+  return await new Response(decompressed).json() as T
 }
 
 function useWidth(ref: React.RefObject<HTMLDivElement>) {
@@ -209,11 +227,12 @@ export default function App() {
   const width = useWidth(wrapRef)
   const height = width < 640 ? 560 : Math.min(760, Math.max(620, width * 0.64))
   const [config, setConfig] = useState<RepoCityConfig>(FALLBACK_CONFIG)
+  const [demos, setDemos] = useState<Demo[]>([])
+  const [activeDemoId, setActiveDemoId] = useState('')
   const [replay, setReplay] = useState<Replay | null>(null)
   const [eventIndex, setEventIndex] = useState(0)
   const [playing, setPlaying] = useState(false)
   const [speed, setSpeed] = useState<Speed>(FALLBACK_CONFIG.city.speed)
-  const [effectPace, setEffectPace] = useState<EffectPace>(FALLBACK_CONFIG.city.effectPace)
   const [layoutMode, setLayoutMode] = useState<CityLayoutMode>(FALLBACK_CONFIG.city.layout)
   const [neighborhoodDepth, setNeighborhoodDepth] = useState(
     FALLBACK_CONFIG.city.neighborhoodDepth,
@@ -229,10 +248,16 @@ export default function App() {
     const controller = new AbortController()
     async function load() {
       try {
-        const configResponse = await fetch('/repocity.config.json', { signal: controller.signal })
+        const [configResponse, catalogResponse] = await Promise.all([
+          fetch(publicAssetUrl('repocity.config.json'), { signal: controller.signal }),
+          fetch(publicAssetUrl('demos.json'), { signal: controller.signal }),
+        ])
         const loadedConfig = configResponse.ok
           ? await configResponse.json() as Partial<RepoCityConfig>
           : {}
+        const catalog = catalogResponse.ok
+          ? await catalogResponse.json() as DemoCatalog
+          : { demos: [] }
         const nextConfig: RepoCityConfig = {
           ...FALLBACK_CONFIG,
           ...loadedConfig,
@@ -241,17 +266,27 @@ export default function App() {
         }
         setConfig(nextConfig)
         setSpeed(nextConfig.city.speed)
-        setEffectPace(nextConfig.city.effectPace)
         setLayoutMode(nextConfig.city.layout)
         setNeighborhoodDepth(nextConfig.city.neighborhoodDepth)
         setCameraPreset(nextConfig.city.camera)
         setBlockLines(nextConfig.city.blockLines)
         setAutoTurn(nextConfig.city.autoRotate)
-        const replayResponse = await fetch(replayDataUrl(nextConfig.dataUrl), {
+        setDemos(catalog.demos)
+        const dataset = requestedDataset()
+        const selectedDemo = catalog.demos.find((demo) => demo.id === dataset)
+        const replayPath = selectedDemo?.dataUrl
+          ?? (dataset ? `data/${dataset}.json` : nextConfig.dataUrl)
+        const replayUrl = publicAssetUrl(replayPath)
+        setActiveDemoId(
+          selectedDemo?.id
+            ?? catalog.demos.find((demo) => demo.dataUrl === nextConfig.dataUrl)?.id
+            ?? '',
+        )
+        const replayResponse = await fetch(replayUrl, {
           signal: controller.signal,
         })
         if (!replayResponse.ok) throw new Error(`Replay request failed with ${replayResponse.status}`)
-        const nextReplay = await replayResponse.json() as Replay
+        const nextReplay = await responseJson<Replay>(replayResponse, replayUrl)
         if (!nextReplay.events.length) throw new Error('Replay contains no commits')
         setReplay(nextReplay)
         setEventIndex(0)
@@ -269,7 +304,19 @@ export default function App() {
     () => (replay ? buildCityLayout(replay.paths, layoutMode, neighborhoodDepth) : null),
     [layoutMode, neighborhoodDepth, replay],
   )
+  const firstAppearance = useMemo(
+    () => replay ? firstAppearanceByPath(replay.events, replay.paths.length) : null,
+    [replay],
+  )
+  const replayState = useMemo(
+    () => replay ? reconstructPair(replay, eventIndex) : null,
+    [eventIndex, replay],
+  )
   const event = replay?.events[eventIndex]
+  const activeDemo = useMemo(
+    () => demos.find((demo) => demo.id === activeDemoId),
+    [activeDemoId, demos],
+  )
   const fileStats = useMemo(
     () => replay ? eventFileStats(replay, event) : { additions: 0, removals: 0, files: 0 },
     [event, replay],
@@ -278,7 +325,7 @@ export default function App() {
 
   useEffect(() => {
     const canvas = canvasRef.current
-    if (!canvas || !layout || !replay) return
+    if (!canvas || !firstAppearance || !layout || !replay) return
     let cancelled = false
     let created: ThreeCityScene | null = null
     setHover(null)
@@ -288,7 +335,7 @@ export default function App() {
         canvas,
         layout,
         replay.paths,
-        replay.events,
+        firstAppearance,
         sceneColors(canvas),
         config.city.alleyWidth,
       )
@@ -305,16 +352,15 @@ export default function App() {
       created?.dispose()
       if (sceneRef.current === created) sceneRef.current = null
     }
-  }, [config.city.alleyWidth, layout, replay])
+  }, [config.city.alleyWidth, firstAppearance, layout, replay])
 
   useEffect(() => sceneRef.current?.setView(cameraPreset), [cameraPreset, sceneVersion])
   useEffect(() => sceneRef.current?.setSize(width, height), [height, sceneVersion, width])
 
   useEffect(() => {
     const scene = sceneRef.current
-    if (!scene || !replay || !event) return
-    const before = reconstruct(replay, eventIndex - 1)
-    const after = reconstruct(replay, eventIndex)
+    if (!scene || !replay || !event || !replayState) return
+    const { before, after } = replayState
     const showWorkers = speed === 'inspect' || speed === 'fast' || speed === 'timelapse'
     const effectDelay = playing && showWorkers ? DURATION[speed] * 0.68 : 0
     scene.beginEvent(
@@ -323,7 +369,7 @@ export default function App() {
       event,
       eventIndex,
       blockLines,
-      playing && !reducedMotion() ? EFFECT_DURATION[effectPace] : 0,
+      playing && !reducedMotion() ? EFFECT_DURATION : 0,
       showWorkers,
       DETAILED_EFFECTS[speed],
       effectDelay,
@@ -353,6 +399,7 @@ export default function App() {
             blocks: scene.linesForPath(current.pathId) / blockLines,
           } : null)
       }
+      scene.tickEffects(now)
       scene.turntableFrame()
       if (progress < 1) {
         frame = requestAnimationFrame(draw)
@@ -367,14 +414,15 @@ export default function App() {
     }
     frame = requestAnimationFrame(draw)
     return () => cancelAnimationFrame(frame)
-  }, [blockLines, effectPace, event, eventIndex, playing, replay, sceneVersion, speed])
+  }, [blockLines, event, eventIndex, playing, replay, replayState, sceneVersion, speed])
 
   useEffect(() => {
-    if (!sceneVersion) return
+    if (!sceneVersion || playing) return
     let frame = 0
     const tick = (now: number) => {
       const changed = sceneRef.current?.tickEffects(now)
-      if (changed && !playing && !autoTurn) sceneRef.current?.render()
+      if (!changed) return
+      if (!autoTurn) sceneRef.current?.render()
       frame = requestAnimationFrame(tick)
     }
     frame = requestAnimationFrame(tick)
@@ -399,14 +447,19 @@ export default function App() {
   }, [autoTurn, playing, sceneVersion])
 
   const currentLines = useMemo(() => {
-    if (!replay || !layout) return 0
-    const loc = reconstruct(replay, eventIndex)
-    return layout.lots.reduce((sum, lot) => sum + (loc[lot.pathId] ?? 0), 0)
-  }, [eventIndex, layout, replay])
+    if (!layout || !replayState) return 0
+    return layout.lots.reduce((sum, lot) => sum + (replayState.after[lot.pathId] ?? 0), 0)
+  }, [layout, replayState])
 
   const clearHover = () => {
     sceneRef.current?.clearHover()
     setHover(null)
+  }
+
+  const chooseDemo = (id: string) => {
+    const url = new URL(window.location.href)
+    url.searchParams.set('dataset', id)
+    window.location.assign(url)
   }
 
   const handlePointerMove = (pointerEvent: React.PointerEvent<HTMLCanvasElement>) => {
@@ -458,6 +511,22 @@ export default function App() {
           <span className="eyebrow">Git history, rendered</span>
           <h1>{config.title}</h1>
           <p>{config.subtitle}</p>
+          {demos.length ? (
+            <label className="demo-picker">
+              Demo
+              <select value={activeDemoId} onChange={(change) => chooseDemo(change.target.value)}>
+                {demos.map((demo) => (
+                  <option key={demo.id} value={demo.id}>{demo.label}</option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+          {activeDemo ? (
+            <div className="demo-note">
+              {activeDemo.description}{' '}
+              <a href={activeDemo.repositoryUrl}>View {activeDemo.repository} on GitHub</a>.
+            </div>
+          ) : null}
         </div>
         {replay ? (
           <dl className="repo-summary">
@@ -591,12 +660,6 @@ export default function App() {
                 <span>Speed</span>
                 {SPEEDS.map(([value, label]) => (
                   <button key={value} className={speed === value ? 'active' : ''} onClick={() => setSpeed(value)}>{label}</button>
-                ))}
-              </div>
-              <div className="control-group">
-                <span>Laser / trails</span>
-                {EFFECT_PACES.map(([value, label]) => (
-                  <button key={value} className={effectPace === value ? 'active' : ''} onClick={() => setEffectPace(value)}>{label}</button>
                 ))}
               </div>
             </div>

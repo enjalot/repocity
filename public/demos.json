@@ -1,0 +1,44 @@
+{
+  "demos": [
+    {
+      "id": "latent-scope",
+      "label": "Latent Scope",
+      "repository": "enjalot/latent-scope",
+      "repositoryUrl": "https://github.com/enjalot/latent-scope",
+      "description": "Full first-parent history of an interactive embedding and latent-space exploration tool.",
+      "dataUrl": "/data/latent-scope.json.gz",
+      "snapshotTip": "41f7305dffbbc0dd74d3605ac6af9df21fa1270f",
+      "events": 442
+    },
+    {
+      "id": "pi",
+      "label": "Pi agent harness",
+      "repository": "earendil-works/pi",
+      "repositoryUrl": "https://github.com/earendil-works/pi",
+      "description": "Full first-parent history of the Pi coding-agent harness and its tests.",
+      "dataUrl": "/data/pi.json.gz",
+      "snapshotTip": "4e69b0c28060f0f02fbe38bfa7c21a2e2eb25057",
+      "events": 4721
+    },
+    {
+      "id": "fastapi",
+      "label": "FastAPI",
+      "repository": "fastapi/fastapi",
+      "repositoryUrl": "https://github.com/fastapi/fastapi",
+      "description": "Full first-parent history of the FastAPI Python framework, including its unusually test-heavy city.",
+      "dataUrl": "/data/fastapi.json.gz",
+      "snapshotTip": "50113da16fec53b66b80d75e80a89296de4fa5a5",
+      "events": 7689
+    },
+    {
+      "id": "react",
+      "label": "React",
+      "repository": "facebook/react",
+      "repositoryUrl": "https://github.com/facebook/react",
+      "description": "Full first-parent history of React. Fixtures and generated files remain outside the source-and-test city.",
+      "dataUrl": "/data/react.json.gz",
+      "snapshotTip": "d9f4e76bd6582ef86048fefcedda9d5b041ae62f",
+      "events": 14921
+    }
+  ]
+}

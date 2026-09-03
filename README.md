@@ -26,7 +26,7 @@ python3 scripts/build_replay.py earendil-works/pi --ref HEAD \
 npm run dev:lan
 ```
 
-For example, `http://localhost:5173/?dataset=latent-scope` loads `public/data/latent-scope.json`. Dataset names may contain letters, numbers, dots, underscores, and hyphens.
+For example, `http://localhost:5173/?dataset=latent-scope` loads the matching entry from `public/demos.json`. Without a catalog entry, RepoCity falls back to `public/data/latent-scope.json`. Dataset names may contain letters, numbers, dots, underscores, and hyphens.
 
 A public or authenticated GitHub repository can be used directly. RepoCity clones it into a temporary directory and removes the clone afterward:
 
@@ -36,6 +36,19 @@ python3 scripts/build_replay.py https://github.com/owner/repository.git --ref HE
 ```
 
 Remote clones use a filtered, single-branch checkout by default. Git shows clone progress, downloads blobs up to 1 MiB up front, and retrieves unusually large blobs only if replay validation needs them.
+
+Very large repositories can use an explicitly bounded remote history. A shallow replay begins with the complete selected-path snapshot at the shallow boundary, so it remains internally consistent but does not claim to show the repository's genesis:
+
+```bash
+python3 scripts/build_replay.py owner/very-large-monorepo \
+  --ref master \
+  --clone-depth 5000 \
+  --clone-filter tree:0 \
+  --include products/example \
+  --name example
+```
+
+Partial-clone filter support varies by Git server. Stop the clone if Git warns that filtering is ignored or the remote starts enumerating the full repository, then use a smaller upstream mirror or an existing local clone.
 
 RepoCity's open-source smoke-test targets include [Latent Scope](https://github.com/enjalot/latent-scope) and the [Pi agent harness](https://github.com/earendil-works/pi):
 
@@ -56,6 +69,29 @@ python3 scripts/build_replay.py /path/to/monorepo \
 ```
 
 `--include` accepts Git pathspecs. `--exclude` accepts Git glob patterns and can be repeated.
+
+## Public demos and GitHub Pages
+
+The tracked demo catalog includes four deliberately different histories:
+
+| Demo | History represented |
+| --- | --- |
+| [Latent Scope](https://github.com/enjalot/latent-scope) | Full history; compact visualization tool |
+| [Pi](https://github.com/earendil-works/pi) | Full history; medium-sized agent harness |
+| [FastAPI](https://github.com/fastapi/fastapi) | Full history; Python and test-heavy |
+| [React](https://github.com/facebook/react) | Full history; large, long-lived JavaScript monorepo |
+
+Each replay is LOC-validated before packaging. `scripts/package_demo.py` validates the replay shape and creates deterministic gzip data for static hosting:
+
+```bash
+python3 scripts/build_replay.py facebook/react --ref HEAD \
+  --name react --output /tmp/react.json
+python3 scripts/package_demo.py /tmp/react.json public/data/react.json.gz
+```
+
+`public/demos.json` records each snapshot commit, scope, and event count. The browser decompresses these files as streams, cutting transfer size substantially without requiring server-specific headers.
+
+The included `.github/workflows/pages.yml` tests and builds the app, uploads `dist`, and deploys it with GitHub's Pages actions. In the repository settings, select **GitHub Actions** as the Pages source. Vite emits project-relative asset URLs, so the build works at `https://OWNER.github.io/REPOSITORY/` as well as at a custom domain.
 
 ## What the replay means
 
@@ -90,6 +126,8 @@ npm run test:data
 npm run typecheck
 npm run build
 ```
+
+For large histories, RepoCity stores periodic checkpoints, reuses parsed first-appearance metadata, updates only files touched by each sequential commit, bounds accumulated effects, stops idle animation frames, and lowers WebGL sampling for cities above 6,000 lots. Laser and trail effects always last 0.9 seconds; timeline speed remains independent.
 
 ## Use it as an agent skill
 

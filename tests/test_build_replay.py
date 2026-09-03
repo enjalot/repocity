@@ -67,6 +67,26 @@ class ParsingTests(unittest.TestCase):
         self.assertEqual(args[branch_index + 1], "main")
         self.assertIn("--single-branch", args)
 
+    def test_remote_clone_can_bound_large_histories(self):
+        args = remote_clone_args(
+            "https://github.com/example/project.git",
+            Path("/tmp/project"),
+            "main",
+            20_000,
+        )
+        depth_index = args.index("--depth")
+        self.assertEqual(args[depth_index + 1], "20000")
+
+    def test_remote_clone_can_defer_large_repository_trees(self):
+        args = remote_clone_args(
+            "https://github.com/example/project.git",
+            Path("/tmp/project"),
+            "main",
+            5_000,
+            "tree:0",
+        )
+        self.assertIn("--filter=tree:0", args)
+
 
 class ClassificationTests(unittest.TestCase):
     def setUp(self):

@@ -5,3 +5,4 @@ __pycache__/
 .DS_Store
 public/data/*.json
 !public/data/example-replay.json
+!public/data/*.json.gz

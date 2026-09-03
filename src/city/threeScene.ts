@@ -4,7 +4,6 @@ import {
   WORLD_HEIGHT,
   WORLD_WIDTH,
   cityDeltas,
-  firstAppearanceByPath,
   pointOnRoute,
   type CityLayout,
   type CityLot,
@@ -468,7 +467,7 @@ export class ThreeCityScene {
     canvas: HTMLCanvasElement,
     layout: CityLayout,
     paths: ReplayPath[],
-    events: ReplayEvent[],
+    firstAppearance: Int32Array,
     colors: ThreeSceneColors,
     alleyWidth: number,
   ) {
@@ -479,12 +478,18 @@ export class ThreeCityScene {
     this.addLaserColor = new THREE.Color(colors.add)
     this.removeLaserColor = new THREE.Color(colors.remove)
     this.lines = new Float64Array(paths.length)
-    this.firstAppearance = firstAppearanceByPath(events, paths.length)
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false, powerPreference: 'high-performance' })
+    this.firstAppearance = firstAppearance
+    const largeCity = layout.lots.length > 6_000
+    this.renderer = new THREE.WebGLRenderer({
+      canvas,
+      antialias: !largeCity,
+      alpha: false,
+      powerPreference: 'high-performance',
+    })
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping
     this.renderer.toneMappingExposure = 1.08
-    this.renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1))
+    this.renderer.setPixelRatio(Math.min(largeCity ? 1.35 : 2, window.devicePixelRatio || 1))
     this.renderer.setClearColor(colors.sky)
 
     this.scene = new THREE.Scene()
@@ -640,7 +645,7 @@ export class ThreeCityScene {
   }
 
   setState(lines: Float64Array, blockLines: number, eventIndex: number) {
-    this.lines = new Float64Array(lines)
+    this.lines.set(lines)
     this.blockLines = blockLines
     this.stateEventIndex = eventIndex
     this.targetEventIndex = eventIndex
@@ -995,11 +1000,18 @@ export class ThreeCityScene {
     detailedEffectLimit = MAX_WORKERS,
     effectDelay = 0,
   ) {
-    this.blockLines = blockLines
+    const canAdvanceIncrementally = (
+      this.stateEventIndex === eventIndex - 1 && this.blockLines === blockLines
+    )
     this.activeDeltas = cityDeltas(this.layout, before, after)
     const allActions = collectLaserActions(this.layout, before, after, event)
     const actions = selectWorkerLaserActions(allActions)
-    this.setState(before, blockLines, eventIndex - 1)
+    if (canAdvanceIncrementally) {
+      this.lines.set(before)
+      this.blockLines = blockLines
+    } else {
+      this.setState(before, blockLines, eventIndex - 1)
+    }
     this.targetEventIndex = eventIndex
     const authorColor = new THREE.Color(workerColor(event, this.colors))
     if (effectDuration > 0 && this.lastSpawnedSha !== event.sha) {
@@ -1042,10 +1054,12 @@ export class ThreeCityScene {
 
     if (progress >= 1 && this.stateEventIndex !== this.targetEventIndex) {
       this.stateEventIndex = this.targetEventIndex
-      for (const lot of this.layout.lots) {
-        if ((this.lines[lot.pathId] ?? 0) <= 0) this.setBuilding(lot.pathId, 0)
+      for (const delta of this.activeDeltas) {
+        if ((this.lines[delta.lot.pathId] ?? 0) <= 0) {
+          this.setBuilding(delta.lot.pathId, 0)
+        }
       }
-      this.flushInstances(true)
+      if (this.activeDeltas.length) this.flushInstances(true)
     }
 
     this.workers.forEach((worker, index) => {
