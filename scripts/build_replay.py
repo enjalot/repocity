@@ -180,6 +180,41 @@ def run(
     return proc.stdout
 
 
+def remote_clone_args(url: str, destination: Path, ref: str) -> list[str]:
+    """Build a bandwidth-conscious clone command for a remote replay target."""
+    args = [
+        "git",
+        "clone",
+        "--filter=blob:limit=1m",
+        "--no-checkout",
+        "--progress",
+    ]
+    branch: str | None = None
+    if ref == "HEAD":
+        args.extend(["--single-branch", "--no-tags"])
+    elif ref.startswith("origin/"):
+        branch = ref.removeprefix("origin/")
+    elif ref.startswith("refs/heads/"):
+        branch = ref.removeprefix("refs/heads/")
+    elif re.fullmatch(r"(?![0-9a-fA-F]{7,40}$)[A-Za-z0-9._/-]+", ref):
+        branch = ref
+    if branch:
+        args.extend(["--single-branch", "--branch", branch])
+    args.extend([url, str(destination)])
+    return args
+
+
+def clone_remote(url: str, destination: Path, ref: str) -> None:
+    """Clone while leaving Git's progress visible for large repositories."""
+    proc = subprocess.run(
+        remote_clone_args(url, destination, ref),
+        stdout=subprocess.DEVNULL,
+        check=False,
+    )
+    if proc.returncode:
+        raise RuntimeError(f"Git clone failed with exit code {proc.returncode}")
+
+
 def decode(value: bytes) -> str:
     return value.decode("utf-8", "replace")
 
@@ -378,7 +413,7 @@ def looks_like_remote(source: str) -> bool:
 
 
 @contextlib.contextmanager
-def resolve_repo(source: str) -> Iterator[Path]:
+def resolve_repo(source: str, ref: str = "HEAD") -> Iterator[Path]:
     local = Path(source).expanduser()
     if local.exists():
         repo = local.resolve()
@@ -387,10 +422,14 @@ def resolve_repo(source: str) -> Iterator[Path]:
         return
     if not looks_like_remote(source):
         raise ValueError(f"Repository does not exist: {source}")
-    url = f"https://github.com/{source}.git" if "://" not in source and not source.startswith("git@") else source
+    url = (
+        f"https://github.com/{source}.git"
+        if "://" not in source and not source.startswith("git@")
+        else source
+    )
     with tempfile.TemporaryDirectory(prefix="repocity-clone.") as raw_temp:
         destination = Path(raw_temp) / "repo"
-        run(["git", "clone", "--quiet", "--no-checkout", url, str(destination)])
+        clone_remote(url, destination, ref)
         yield destination
 
 
@@ -654,7 +693,7 @@ def main() -> int:
     config = load_config(args.config)
     classifier = Classifier(config.get("classification") or {})
     selected_paths = pathspecs(args.include, args.exclude)
-    with resolve_repo(args.repo) as repo:
+    with resolve_repo(args.repo, args.ref) as repo:
         name = repository_name(repo, args.name)
         replay = build_replay(
             repo,

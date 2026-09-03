@@ -23,6 +23,15 @@ python3 scripts/build_replay.py owner/repository --ref HEAD
 python3 scripts/build_replay.py https://github.com/owner/repository.git --ref HEAD
 ```
 
+Remote clones use a filtered, single-branch checkout by default. Git shows clone progress, downloads blobs up to 1 MiB up front, and retrieves unusually large blobs only if replay validation needs them.
+
+RepoCity's open-source smoke-test targets include [Latent Scope](https://github.com/enjalot/latent-scope) and the [Pi agent harness](https://github.com/earendil-works/pi):
+
+```bash
+python3 scripts/build_replay.py enjalot/latent-scope --ref HEAD
+python3 scripts/build_replay.py earendil-works/pi --ref HEAD
+```
+
 For a large monorepo, select only the product directories that form one meaningful codebase:
 
 ```bash

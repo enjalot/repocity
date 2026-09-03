@@ -16,6 +16,7 @@ from build_replay import (  # noqa: E402
     parse_numstat_blob,
     parse_status_blob,
     pathspecs,
+    remote_clone_args,
 )
 
 
@@ -48,6 +49,23 @@ class ParsingTests(unittest.TestCase):
             pathspecs([], ["vendor/**"]),
             [":(top,glob)**", ":(exclude,top,glob)vendor/**"],
         )
+
+    def test_remote_clone_limits_blobs_and_default_branch(self):
+        args = remote_clone_args(
+            "https://github.com/example/project.git", Path("/tmp/project"), "HEAD"
+        )
+        self.assertIn("--filter=blob:limit=1m", args)
+        self.assertIn("--single-branch", args)
+        self.assertIn("--no-tags", args)
+        self.assertNotIn("--branch", args)
+
+    def test_remote_clone_maps_remote_tracking_branch(self):
+        args = remote_clone_args(
+            "https://github.com/example/project.git", Path("/tmp/project"), "origin/main"
+        )
+        branch_index = args.index("--branch")
+        self.assertEqual(args[branch_index + 1], "main")
+        self.assertIn("--single-branch", args)
 
 
 class ClassificationTests(unittest.TestCase):

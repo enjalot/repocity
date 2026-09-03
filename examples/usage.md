@@ -10,11 +10,18 @@ npm run dev
 ## A GitHub repository
 
 ```bash
-python3 scripts/build_replay.py owner/repository --ref HEAD --pretty
+python3 scripts/build_replay.py enjalot/latent-scope --ref HEAD --pretty
 npm run build
 ```
 
 Git uses the machine's normal credential helper, so the same command works for a private repository when the user already has clone access.
+
+For a larger public monorepo, Pi exercises the same remote path without requiring product-specific configuration:
+
+```bash
+python3 scripts/build_replay.py earendil-works/pi --ref HEAD
+npm run build
+```
 
 ## A large monorepo
 
