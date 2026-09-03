@@ -16,6 +16,18 @@ npm run dev
 
 Open the URL Vite prints. The default data destination is `public/data/replay.json`.
 
+To keep several generated cities available from one dev server, give each replay a short filename and select it with `?dataset=NAME`:
+
+```bash
+python3 scripts/build_replay.py enjalot/latent-scope --ref HEAD \
+  --output public/data/latent-scope.json
+python3 scripts/build_replay.py earendil-works/pi --ref HEAD \
+  --output public/data/pi.json
+npm run dev:lan
+```
+
+For example, `http://localhost:5173/?dataset=latent-scope` loads `public/data/latent-scope.json`. Dataset names may contain letters, numbers, dots, underscores, and hyphens.
+
 A public or authenticated GitHub repository can be used directly. RepoCity clones it into a temporary directory and removes the clone afterward:
 
 ```bash

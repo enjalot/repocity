@@ -126,6 +126,13 @@ const FALLBACK_CONFIG: RepoCityConfig = {
   },
 }
 
+function replayDataUrl(defaultUrl: string): string {
+  const dataset = new URLSearchParams(window.location.search).get('dataset')
+  return dataset && /^[A-Za-z0-9._-]+$/.test(dataset)
+    ? `/data/${dataset}.json`
+    : defaultUrl
+}
+
 function useWidth(ref: React.RefObject<HTMLDivElement>) {
   const [width, setWidth] = useState(1100)
   useEffect(() => {
@@ -226,7 +233,9 @@ export default function App() {
         setCameraPreset(nextConfig.city.camera)
         setBlockLines(nextConfig.city.blockLines)
         setAutoTurn(nextConfig.city.autoRotate)
-        const replayResponse = await fetch(nextConfig.dataUrl, { signal: controller.signal })
+        const replayResponse = await fetch(replayDataUrl(nextConfig.dataUrl), {
+          signal: controller.signal,
+        })
         if (!replayResponse.ok) throw new Error(`Replay request failed with ${replayResponse.status}`)
         const nextReplay = await replayResponse.json() as Replay
         if (!nextReplay.events.length) throw new Error('Replay contains no commits')
