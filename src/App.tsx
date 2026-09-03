@@ -9,6 +9,7 @@ import {
   type ReplayEvent,
 } from './city/model'
 import type { CameraPreset, ThreeCityScene, ThreeSceneColors } from './city/threeScene'
+import { buildFinalLocMarkdown, finalLocMarkdownFilename } from './markdownReport'
 
 type Speed = 'inspect' | 'fast' | 'timelapse' | 'turbo' | 'warp' | 'hyper'
 
@@ -135,6 +136,19 @@ const FALLBACK_CONFIG: RepoCityConfig = {
 function requestedDataset(): string | null {
   const dataset = new URLSearchParams(window.location.search).get('dataset')
   return dataset && /^[A-Za-z0-9._-]+$/.test(dataset) ? dataset : null
+}
+
+function downloadFinalLocReport(replay: Replay) {
+  const blob = new Blob([buildFinalLocMarkdown(replay)], { type: 'text/markdown;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = finalLocMarkdownFilename(replay.repo)
+  link.hidden = true
+  document.body.append(link)
+  link.click()
+  link.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 1_000)
 }
 
 function publicAssetUrl(value: string): string {
@@ -580,6 +594,18 @@ export default function App() {
               <option value={500}>500</option>
             </select>
           </label>
+          {replay ? (
+            <div className="control-group">
+              <span>Export</span>
+              <button
+                type="button"
+                title="Download the top 1,000 source and test files from the final replay state"
+                onClick={() => downloadFinalLocReport(replay)}
+              >
+                Final LOCs (.md)
+              </button>
+            </div>
+          ) : null}
         </div>
         <p className="layout-note">
           {layoutNote} Neighborhoods group files by their first {neighborhoodDepth}{' '}

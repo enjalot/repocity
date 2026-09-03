@@ -16,6 +16,8 @@ npm run dev
 
 Open the URL Vite prints. The default data destination is `public/data/replay.json`.
 
+Use **Export → Final LOCs (.md)** to download a Markdown table of up to 1,000 non-empty source and test files from the final replay state, sorted by descending LOC.
+
 To keep several generated cities available from one dev server, give each replay a short filename and select it with `?dataset=NAME`:
 
 ```bash
@@ -123,6 +125,7 @@ Run these checks after changing the extractor or visualization:
 
 ```bash
 npm run test:data
+npm run test:report
 npm run typecheck
 npm run build
 ```
