@@ -4,12 +4,12 @@
   "dataUrl": "/data/replay.json",
   "city": {
     "layout": "files",
-    "neighborhoodDepth": 1,
-    "blockLines": 100,
+    "neighborhoodDepth": 3,
+    "blockLines": 50,
     "alleyWidth": 1.55,
-    "speed": "turbo",
+    "speed": "fast",
     "effectPace": "brief",
-    "camera": "aerial",
+    "camera": "isometric",
     "autoRotate": false
   },
   "theme": {

@@ -111,12 +111,12 @@ const FALLBACK_CONFIG: RepoCityConfig = {
   dataUrl: '/data/replay.json',
   city: {
     layout: 'files',
-    neighborhoodDepth: 1,
-    blockLines: 100,
+    neighborhoodDepth: 3,
+    blockLines: 50,
     alleyWidth: 1.55,
-    speed: 'turbo',
+    speed: 'fast',
     effectPace: 'brief',
-    camera: 'aerial',
+    camera: 'isometric',
     autoRotate: false,
   },
   theme: {
@@ -479,6 +479,7 @@ export default function App() {
             <button aria-label="Zoom out" onClick={() => sceneRef.current?.zoomBy(0.82)}>−</button>
             <button aria-label="Zoom in" onClick={() => sceneRef.current?.zoomBy(1.22)}>+</button>
             <button className={autoTurn ? 'active' : ''} onClick={() => setAutoTurn((current) => !current)}>Turntable</button>
+            <button onClick={() => sceneRef.current?.resetView()}>Reset</button>
           </div>
           <div className="control-group">
             <span>Layout</span>
@@ -549,7 +550,7 @@ export default function App() {
                     </>
                   ) : (
                     <>
-                      <span>deleted by this commit · 0 lines</span>
+                      <span>deleted</span>
                       <span>{hover.category} · historical peak {formatNumber(hover.peakLoc)} lines</span>
                     </>
                   )}
@@ -567,7 +568,6 @@ export default function App() {
             </div>
             <div className="scrubber">
               <div className="scrubber-actions">
-                <button onClick={() => { setPlaying(false); setEventIndex(0) }}>Restart</button>
                 <button
                   className="playback-button"
                   aria-pressed={playing}
