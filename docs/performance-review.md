@@ -1,6 +1,6 @@
 # Performance and visualization review
 
-Baseline: `bb009a7`. Datasets: the bundled Latent Scope and React histories. Measurements were made locally with Node 23 and headless Chromium at a 1440 × 1100 viewport, device pixel ratio 1. Timings are indicative local measurements; draw calls and texture counts describe these specific scene states.
+Baseline: `7e3df7e`. Datasets: the bundled Latent Scope and React histories. Measurements were made locally with Node 23 and headless Chromium at a 1440 × 1100 viewport, device pixel ratio 1. Timings are indicative local measurements; draw calls and texture counts describe these specific scene states.
 
 ## Findings and changes
 
@@ -37,7 +37,7 @@ Final replay state, equal-file layout, three-folder neighborhoods:
 CPU model measurements compare the baseline and current code in the same Node process, with warm-up and 200 samples. Reproduce with:
 
 ```bash
-node scripts/benchmark_replay.mjs bb009a7
+node scripts/benchmark_replay.mjs 7e3df7e
 ```
 
 The browser comparison includes the corrected paused state (workers hidden) and corrected canvas sizing. These numbers are not claims about frame rate on all GPUs or phones.
