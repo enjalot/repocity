@@ -18,6 +18,8 @@ Open the URL Vite prints. The default data destination is `public/data/replay.js
 
 Use **Export → Final LOCs (.md)** to download a Markdown table of up to 1,000 non-empty source and test files from the final replay state, sorted by descending LOC.
 
+Use **First** and **Final** to jump to the replay endpoints, or click/drag the history overview to seek. Cyan bars show source/test additions and pink bars show removals on a shared logarithmic LOC scale. Bars group consecutive commits; their spacing represents commit order, not elapsed calendar time. **Fit skyline** frames the current buildings, including unusually tall files; **Reset** restores the selected camera preset. District labels become visible as you zoom in far enough to read them.
+
 To keep several generated cities available from one dev server, give each replay a short filename and select it with `?dataset=NAME`:
 
 ```bash
@@ -126,11 +128,24 @@ Run these checks after changing the extractor or visualization:
 ```bash
 npm run test:data
 npm run test:report
+npm run test:city
 npm run typecheck
 npm run build
 ```
 
-For large histories, RepoCity stores periodic checkpoints, reuses parsed first-appearance metadata, updates only files touched by each sequential commit, bounds accumulated effects, stops idle animation frames, and lowers WebGL sampling for cities above 6,000 lots. Laser and trail effects always last 0.9 seconds; timeline speed remains independent.
+For large histories, RepoCity finds the nearest checkpoint by binary search, reuses sequential replay state, and uploads only changed building instances. District floors and label atlases use instanced draws. Effects release their GPU buffers when they expire, idle scenes stop requesting frames, and pixel density is capped for cities above 6,000 lots while retaining antialiasing. Laser and trail effects always last 0.9 seconds; timeline speed remains independent. Playback processes every crossed commit, with catch-up bounded to 100 ms per frame to avoid a burst of work after a stalled or background tab.
+
+For repeatable CPU measurements, run `node scripts/benchmark_replay.mjs`; pass an existing Git ref to compare its model against the working tree. See [the performance and visualization review](docs/performance-review.md) for measured results and remaining limits.
+
+The optional WebGL regression check uses Playwright and a running **development** server:
+
+```bash
+npm run dev -- --host 127.0.0.1 --port 5186 --strictPort
+# In another terminal, with Playwright and its Chromium browser installed:
+npm run test:webgl
+```
+
+If Playwright is installed elsewhere, set `REPOCITY_PLAYWRIGHT_MODULE` to its absolute `index.mjs` path. `REPOCITY_URL` overrides the server URL; `REPOCITY_ARTIFACTS` overrides the default `/tmp/repocity-validation` screenshot/report directory. The check runs in headless Chromium and covers small/large cities, endpoint LOC, all layouts, picking, sparse GPU uploads, effect timing/disposal, fast playback, idle rendering, camera fitting, mobile layout, and reduced motion.
 
 ## Use it as an agent skill
 

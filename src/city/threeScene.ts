@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
+import { districtLabels } from './districtLabels'
 import {
   WORLD_HEIGHT,
   WORLD_WIDTH,
@@ -19,7 +20,7 @@ const MAX_TRAIL_EFFECTS = 512
 const MAX_BURST_EFFECTS = 512
 const TRAIL_RING_OUTER_RADIUS = 0.52
 const RING_MIN_RADIUS_FRACTION = 0.225
-const RING_MAX_SPAN_MULTIPLIER = 4.4
+const RING_MAX_SPAN_MULTIPLIER = 1.25
 const RING_FULL_RADIUS_BLOCKS = 20
 const LASER_FULL_ENERGY_BLOCKS = 500
 const LASER_IMPACT_AT = 2 / 9
@@ -265,54 +266,16 @@ function makeStripedMaterial(blockHeight: number) {
         '#include <opaque_fragment>',
         `float blockPhase = fract(max(vCityHeight, 0.0) / uBlockHeight);
         float blockEdge = min(blockPhase, 1.0 - blockPhase);
-        float seamWidth = max(fwidth(vCityHeight / uBlockHeight) * 1.15, 0.025);
+        float footprint = fwidth(vCityHeight / uBlockHeight);
+        float seamWidth = max(footprint * 1.15, 0.025);
         float blockSeam = 1.0 - smoothstep(0.0, seamWidth, blockEdge);
+        blockSeam *= 1.0 - smoothstep(0.25, 0.75, footprint);
         outgoingLight = mix(outgoingLight, outgoingLight * 0.48, blockSeam * 0.48);
         #include <opaque_fragment>`,
       )
   }
   material.customProgramCacheKey = () => 'city-block-seams-v1'
   return material
-}
-
-function textPlane(renderer: THREE.WebGLRenderer, text: string, color: string, width: number) {
-  const canvas = document.createElement('canvas')
-  canvas.width = 1024
-  canvas.height = 192
-  const context = canvas.getContext('2d')
-  if (!context) throw new Error('Could not create district label texture')
-  context.clearRect(0, 0, canvas.width, canvas.height)
-  let fontSize = 92
-  context.font = `500 ${fontSize}px "Source Sans 3", system-ui, sans-serif`
-  while (context.measureText(text).width > 900 && fontSize > 42) {
-    fontSize -= 4
-    context.font = `500 ${fontSize}px "Source Sans 3", system-ui, sans-serif`
-  }
-  context.textAlign = 'center'
-  context.textBaseline = 'middle'
-  context.lineWidth = 7
-  context.strokeStyle = 'rgba(8, 12, 22, 0.52)'
-  context.strokeText(text, canvas.width / 2, canvas.height / 2)
-  context.fillStyle = color
-  context.fillText(text, canvas.width / 2, canvas.height / 2)
-  const texture = new THREE.CanvasTexture(canvas)
-  texture.colorSpace = THREE.SRGBColorSpace
-  texture.anisotropy = renderer.capabilities.getMaxAnisotropy()
-  texture.needsUpdate = true
-  const material = new THREE.MeshBasicMaterial({
-    map: texture,
-    transparent: true,
-    opacity: 0.82,
-    alphaTest: 0.04,
-    depthTest: false,
-    depthWrite: false,
-    side: THREE.DoubleSide,
-  })
-  material.toneMapped = false
-  const plane = new THREE.Mesh(new THREE.PlaneGeometry(width, width * (canvas.height / canvas.width)), material)
-  plane.rotation.x = -Math.PI / 2
-  plane.renderOrder = 9
-  return plane
 }
 
 function makeBot(): { group: THREE.Group; materials: THREE.MeshStandardMaterial[] } {
@@ -451,6 +414,12 @@ export class ThreeCityScene {
   private readonly strikeLaserColor: THREE.Color
   private readonly addLaserColor: THREE.Color
   private readonly removeLaserColor: THREE.Color
+  private readonly buildingColors: Record<'source' | 'test' | 'deleted', THREE.Color>
+  private readonly dirtyMatrices = new Set<THREE.InstancedMesh>()
+  private readonly dirtyColors = new Set<THREE.InstancedMesh>()
+  private readonly labelPixelsPerUnit: { value: number }
+  private viewportHeight = 700
+  private updatingControls = false
   private averageBuildingSpan = 0.25
   private lines: Float64Array
   private blockLines = 100
@@ -477,12 +446,16 @@ export class ThreeCityScene {
     this.strikeLaserColor = new THREE.Color(colors.label).lerp(new THREE.Color(colors.sky), 0.45)
     this.addLaserColor = new THREE.Color(colors.add)
     this.removeLaserColor = new THREE.Color(colors.remove)
+    this.buildingColors = {
+      source: new THREE.Color(colors.source), test: new THREE.Color(colors.test),
+      deleted: new THREE.Color(colors.empty),
+    }
     this.lines = new Float64Array(paths.length)
     this.firstAppearance = firstAppearance
     const largeCity = layout.lots.length > 6_000
     this.renderer = new THREE.WebGLRenderer({
       canvas,
-      antialias: !largeCity,
+      antialias: true,
       alpha: false,
       powerPreference: 'high-performance',
     })
@@ -500,13 +473,13 @@ export class ThreeCityScene {
     this.controls.target.set(0, 2.2, 0)
     this.controls.enablePan = false
     this.controls.enableZoom = true
-    this.controls.minZoom = 0.62
+    this.controls.minZoom = 0.02
     this.controls.maxZoom = 3.2
     this.controls.enableDamping = false
     this.controls.minPolarAngle = Math.PI * 0.14
     this.controls.maxPolarAngle = Math.PI * 0.48
     this.controls.autoRotateSpeed = 0.78
-    this.controls.addEventListener('change', this.render)
+    this.controls.addEventListener('change', this.onControlsChange)
 
     this.scene.add(new THREE.HemisphereLight(0xcad8ff, 0x191527, 2.25))
     const sun = new THREE.DirectionalLight(0xfff0ce, 2.35)
@@ -522,13 +495,17 @@ export class ThreeCityScene {
     this.scene.add(ground)
 
     const districtMaterial = new THREE.MeshStandardMaterial({ color: colors.district, roughness: 0.9 })
-    for (const district of layout.districts) {
+    const districtMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), districtMaterial, layout.districts.length)
+    districtMesh.name = 'district-floors'
+    layout.districts.forEach((district, index) => {
       const width = Math.max(0.03, (district.x1 - district.x0) * WORLD_SCALE)
       const depth = Math.max(0.03, (district.y1 - district.y0) * WORLD_SCALE)
-      const pad = new THREE.Mesh(new THREE.BoxGeometry(width, 0.04, depth), districtMaterial)
-      pad.position.set(cityX((district.x0 + district.x1) / 2), -0.005, cityZ((district.y0 + district.y1) / 2))
-      this.scene.add(pad)
-    }
+      this.dummy.position.set(cityX((district.x0 + district.x1) / 2), -0.005, cityZ((district.y0 + district.y1) / 2))
+      this.dummy.scale.set(width, 0.04, depth)
+      this.dummy.updateMatrix()
+      districtMesh.setMatrixAt(index, this.dummy.matrix)
+    })
+    this.scene.add(districtMesh)
 
     const geometry = new THREE.BoxGeometry(1, 1, 1)
     this.sourceLots = layout.lots.filter((lot) => lot.category === 'source')
@@ -545,13 +522,13 @@ export class ThreeCityScene {
     this.indexLots(this.sourceMesh, this.sourceLots)
     this.indexLots(this.testMesh, this.testLots)
     for (const lot of this.layout.lots) this.setBuilding(lot.pathId, 0)
-    this.flushInstances(true)
+    this.flushInstances()
     const buildingDimensions = [...this.slots.values()].flatMap(({ bounds }) => [bounds.width, bounds.depth])
     if (buildingDimensions.length) {
       this.averageBuildingSpan = buildingDimensions.reduce((sum, value) => sum + value, 0) / buildingDimensions.length
     }
 
-    const edgeGeometry = new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1), 24)
+    const edgeGeometry = new THREE.EdgesGeometry(geometry, 24)
     this.hoverOutline = new THREE.LineSegments(
       edgeGeometry,
       new THREE.LineBasicMaterial({ color: colors.hover, transparent: true, opacity: 0.95 }),
@@ -560,18 +537,12 @@ export class ThreeCityScene {
     this.hoverOutline.renderOrder = 5
     this.scene.add(this.hoverOutline)
 
-    for (const district of layout.districts.filter((item) => item.isDirectory)) {
-      const districtWidth = (district.x1 - district.x0) * WORLD_SCALE
-      const width = Math.min(7.4, Math.max(0.72, districtWidth * 0.64))
-      const frontInset = Math.min(4.5, Math.max(0.8, (district.y1 - district.y0) * 0.22))
-      const label = textPlane(this.renderer, district.name, colors.label, width)
-      label.name = `district-label:${district.name}`
-      label.position.set(
-        cityX((district.x0 + district.x1) / 2),
-        0.13,
-        cityZ(district.y1 - frontInset),
-      )
-      this.scene.add(label)
+    const labels = districtLabels(layout.districts, WORLD_SCALE, WORLD_WIDTH, WORLD_HEIGHT)
+    this.labelPixelsPerUnit = labels.pixelsPerUnit
+    for (const batch of labels.batches) {
+      const material = batch.material as THREE.MeshBasicMaterial
+      material.color.set(colors.label)
+      this.scene.add(batch)
     }
 
     this.workers = Array.from({ length: MAX_WORKERS }, () => makeWorker(this.scene))
@@ -614,7 +585,10 @@ export class ThreeCityScene {
     const slot = this.slots.get(pathId)
     if (!slot) return
     const future = lines <= 0 && this.stateEventIndex < this.firstAppearance[pathId]
+    const previousState = slot.state
     slot.state = future ? 'future' : lines > 0 ? 'present' : 'deleted'
+    this.dirtyMatrices.add(slot.mesh)
+    slot.mesh.instanceMatrix.addUpdateRange(slot.instanceId * 16, 16)
     if (future) {
       this.dummy.position.set(slot.bounds.x, 0, slot.bounds.z)
       this.dummy.scale.set(0, 0, 0)
@@ -629,19 +603,20 @@ export class ThreeCityScene {
     this.dummy.rotation.set(0, 0, 0)
     this.dummy.updateMatrix()
     slot.mesh.setMatrixAt(slot.instanceId, this.dummy.matrix)
-    slot.mesh.setColorAt(
-      slot.instanceId,
-      new THREE.Color(lines > 0 ? (slot.lot.category === 'test' ? this.colors.test : this.colors.source) : this.colors.empty),
-    )
+    if (slot.state !== previousState || !slot.mesh.instanceColor) {
+      slot.mesh.setColorAt(slot.instanceId, this.buildingColors[lines > 0 ? slot.lot.category : 'deleted'])
+      slot.mesh.instanceColor?.addUpdateRange(slot.instanceId * 3, 3)
+      this.dirtyColors.add(slot.mesh)
+    }
   }
 
-  private flushInstances(colors = false) {
-    this.sourceMesh.instanceMatrix.needsUpdate = true
-    this.testMesh.instanceMatrix.needsUpdate = true
-    if (colors) {
-      if (this.sourceMesh.instanceColor) this.sourceMesh.instanceColor.needsUpdate = true
-      if (this.testMesh.instanceColor) this.testMesh.instanceColor.needsUpdate = true
+  private flushInstances() {
+    for (const mesh of this.dirtyMatrices) mesh.instanceMatrix.needsUpdate = true
+    for (const mesh of this.dirtyColors) {
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
     }
+    this.dirtyMatrices.clear()
+    this.dirtyColors.clear()
   }
 
   setState(lines: Float64Array, blockLines: number, eventIndex: number) {
@@ -650,7 +625,7 @@ export class ThreeCityScene {
     this.stateEventIndex = eventIndex
     this.targetEventIndex = eventIndex
     for (const lot of this.layout.lots) this.setBuilding(lot.pathId, this.lines[lot.pathId] ?? 0)
-    this.flushInstances(true)
+    this.flushInstances()
     this.refreshHover()
     this.render()
   }
@@ -730,15 +705,16 @@ export class ThreeCityScene {
     beam.renderOrder = 8
     group.add(beam)
     const ring = new THREE.Mesh(
-      new THREE.RingGeometry(0.28, TRAIL_RING_OUTER_RADIUS, 28),
+      new THREE.RingGeometry(0.42, TRAIL_RING_OUTER_RADIUS, 28),
       new THREE.MeshBasicMaterial({
         color: actionColor,
         transparent: true,
         opacity: 0,
-        blending: THREE.AdditiveBlending,
+        blending: THREE.NormalBlending,
         depthTest: false,
         depthWrite: false,
         side: THREE.DoubleSide,
+        forceSinglePass: true,
       }),
     )
     ring.rotation.x = Math.PI / 2
@@ -754,10 +730,9 @@ export class ThreeCityScene {
     actions: LaserAction[],
     authorColor: THREE.Color,
     duration: number,
-    delay: number,
+    startedAt: number,
     showRoute: boolean,
   ) {
-    const startedAt = performance.now() + delay
     for (const action of actions) {
       const effect = this.makeTrailEffect(
         action,
@@ -797,7 +772,9 @@ export class ThreeCityScene {
     const ringMaterial = beamMaterial.clone()
     ringMaterial.color.copy(color)
     ringMaterial.depthTest = false
+    ringMaterial.blending = THREE.NormalBlending
     ringMaterial.side = THREE.DoubleSide
+    ringMaterial.forceSinglePass = true
     ringMaterial.toneMapped = false
     const beams = new THREE.InstancedMesh(
       new THREE.CylinderGeometry(0.075, 0.075, 1, 9, 1, true),
@@ -805,7 +782,7 @@ export class ThreeCityScene {
       items.length,
     )
     const rings = new THREE.InstancedMesh(
-      new THREE.RingGeometry(0.28, TRAIL_RING_OUTER_RADIUS, 28),
+      new THREE.RingGeometry(0.42, TRAIL_RING_OUTER_RADIUS, 28),
       ringMaterial,
       items.length,
     )
@@ -830,8 +807,7 @@ export class ThreeCityScene {
     return { group, beams, rings, items, direction, startedAt, duration }
   }
 
-  private spawnLaserBursts(actions: LaserAction[], duration: number, delay: number) {
-    const startedAt = performance.now() + delay
+  private spawnLaserBursts(actions: LaserAction[], duration: number, startedAt: number) {
     const burstDuration = Math.max(500, duration)
     for (const direction of ['add', 'remove'] as const) {
       const directional = actions.filter((action) => action.direction === direction)
@@ -851,6 +827,8 @@ export class ThreeCityScene {
 
   private disposeLaserBurstEffect(effect: LaserBurstEffect) {
     this.scene.remove(effect.group)
+    effect.beams.dispose()
+    effect.rings.dispose()
     effect.beams.geometry.dispose()
     effect.rings.geometry.dispose()
     const materials = [effect.beams.material, effect.rings.material].flat()
@@ -894,7 +872,7 @@ export class ThreeCityScene {
       this.dummy.scale.setScalar(ringScaleFor(
         action.amount,
         this.blockLines,
-        this.averageBuildingSpan,
+        Math.min(this.averageBuildingSpan, Math.sqrt(slot.bounds.width * slot.bounds.depth)),
         TRAIL_RING_OUTER_RADIUS,
         motion.ringProgress,
       ))
@@ -914,7 +892,7 @@ export class ThreeCityScene {
       : Math.pow(reboundArc, 0.55) * mix(1, 0.55, ringProgress)
     const beamStrength = laser <= LASER_IMPACT_AT ? 0.38 : 0.88
     beamMaterial.opacity = laser > 0 ? (beamStrength + Math.sin(laser * Math.PI * 5) * 0.1) * beamPhase * fade : 0
-    ringMaterial.opacity = ringProgress > 0 ? Math.pow(1 - ringProgress, 0.55) * fade : 0
+    ringMaterial.opacity = ringProgress > 0 ? 0.75 * Math.pow(1 - ringProgress, 0.55) * fade : 0
     return life < 1
   }
 
@@ -980,11 +958,11 @@ export class ThreeCityScene {
       effect.ring.scale.setScalar(ringScaleFor(
         effect.action.amount,
         this.blockLines,
-        this.averageBuildingSpan,
+        Math.min(this.averageBuildingSpan, Math.sqrt(effect.slot.bounds.width * effect.slot.bounds.depth)),
         TRAIL_RING_OUTER_RADIUS,
         motion.ringProgress,
       ))
-      effect.ring.material.opacity = motion.ringOpacity * fade
+      effect.ring.material.opacity = motion.ringOpacity * fade * 0.75
     }
     return changed
   }
@@ -1003,7 +981,7 @@ export class ThreeCityScene {
     const canAdvanceIncrementally = (
       this.stateEventIndex === eventIndex - 1 && this.blockLines === blockLines
     )
-    this.activeDeltas = cityDeltas(this.layout, before, after)
+    this.activeDeltas = cityDeltas(this.layout, before, after, event)
     const allActions = collectLaserActions(this.layout, before, after, event)
     const actions = selectWorkerLaserActions(allActions)
     if (canAdvanceIncrementally) {
@@ -1015,18 +993,19 @@ export class ThreeCityScene {
     this.targetEventIndex = eventIndex
     const authorColor = new THREE.Color(workerColor(event, this.colors))
     if (effectDuration > 0 && this.lastSpawnedSha !== event.sha) {
+      const startedAt = performance.now() + effectDelay
       const detailedActions = actions.slice(0, detailedEffectLimit)
-      this.spawnTrailEffects(detailedActions, authorColor, effectDuration, effectDelay, !showWorkers)
+      this.spawnTrailEffects(detailedActions, authorColor, effectDuration, startedAt, !showWorkers)
       const detailed = new Set(detailedActions)
       this.spawnLaserBursts(
         allActions.filter((action) => !detailed.has(action)),
         effectDuration,
-        effectDelay,
+        startedAt,
       )
       this.lastSpawnedSha = event.sha
     }
     this.workers.forEach((worker, index) => {
-      worker.action = showWorkers ? actions[index] ?? null : null
+      worker.action = showWorkers && effectDuration > 0 ? actions[index] ?? null : null
       const active = worker.action !== null
       worker.bot.visible = active
       worker.route.visible = active
@@ -1042,15 +1021,13 @@ export class ThreeCityScene {
 
   updateEvent(progress: number) {
     const globalBuild = easeCubicInOut((progress - 0.68) / 0.32)
-    this.activeDeltas.forEach((delta, index) => {
-      const stagger = index < MAX_WORKERS ? index * 0.022 : 0
-      const local = clamp01((progress - stagger) / (1 - stagger))
-      const build = index < MAX_WORKERS ? easeCubicInOut((local - 0.68) / 0.32) : globalBuild
-      const lines = mix(delta.before, delta.after, build)
+    this.activeDeltas.forEach((delta) => {
+      const lines = mix(delta.before, delta.after, globalBuild)
+      if (this.lines[delta.lot.pathId] === lines) return
       this.lines[delta.lot.pathId] = lines
       this.setBuilding(delta.lot.pathId, lines)
     })
-    if (this.activeDeltas.length) this.flushInstances(true)
+    if (this.activeDeltas.length) this.flushInstances()
 
     if (progress >= 1 && this.stateEventIndex !== this.targetEventIndex) {
       this.stateEventIndex = this.targetEventIndex
@@ -1059,14 +1036,13 @@ export class ThreeCityScene {
           this.setBuilding(delta.lot.pathId, 0)
         }
       }
-      if (this.activeDeltas.length) this.flushInstances(true)
+      if (this.activeDeltas.length) this.flushInstances()
     }
 
-    this.workers.forEach((worker, index) => {
+    this.workers.forEach((worker) => {
       const action = worker.action
       if (!action) return
-      const stagger = index * 0.022
-      const local = clamp01((progress - stagger) / (1 - stagger))
+      const local = clamp01(progress)
       const walkEnd = 0.55
       const climbEnd = 0.68
       const center = {
@@ -1082,11 +1058,11 @@ export class ThreeCityScene {
       } else if (local < climbEnd) {
         const climb = easeCubicOut((local - walkEnd) / (climbEnd - walkEnd))
         world = { x: mix(edge.x, center.x, climb), y: mix(edge.y, center.y, climb) }
-        vertical = mix(0.11, this.heightFor(action.startLines) + 0.11, climb)
+        vertical = mix(0.11, this.heightFor(action.before) + 0.11, climb)
       } else {
         world = center
         const build = easeCubicInOut((local - climbEnd) / (1 - climbEnd))
-        vertical = this.heightFor(mix(action.startLines, action.endLines, build)) + 0.11
+        vertical = this.heightFor(mix(action.before, action.after, build)) + 0.11
       }
       worker.bot.position.copy(floorPoint(world, vertical))
       const lateral = laserOffset(action.direction)
@@ -1126,10 +1102,11 @@ export class ThreeCityScene {
       }
     }
     if (closest) {
+      const changed = this.hoveredPathId !== closest.lot.pathId
       this.hoveredPathId = closest.lot.pathId
       this.hoverOutline.visible = true
       this.refreshHover()
-      this.render()
+      if (changed) this.render()
       return { lot: closest.lot, lines: this.lines[closest.lot.pathId] ?? 0 }
     }
     return null
@@ -1170,7 +1147,42 @@ export class ThreeCityScene {
     this.render()
   }
 
+  fitView = () => {
+    const points: THREE.Vector3[] = []
+    for (const x of [-WORLD_WIDTH * WORLD_SCALE / 2, WORLD_WIDTH * WORLD_SCALE / 2]) {
+      for (const z of [-WORLD_HEIGHT * WORLD_SCALE / 2, WORLD_HEIGHT * WORLD_SCALE / 2]) {
+        points.push(new THREE.Vector3(x, 0, z))
+      }
+    }
+    for (const slot of this.slots.values()) {
+      if (slot.state !== 'present') continue
+      const height = this.heightFor(this.lines[slot.lot.pathId])
+      for (const dx of [-0.5, 0.5]) for (const dz of [-0.5, 0.5]) {
+        points.push(new THREE.Vector3(slot.bounds.x + slot.bounds.width * dx, height,
+          slot.bounds.z + slot.bounds.depth * dz))
+      }
+    }
+    this.camera.updateMatrixWorld()
+    const bounds = new THREE.Box3().setFromPoints(points.map(point => point.applyMatrix4(this.camera.matrixWorldInverse)))
+    const center = bounds.getCenter(new THREE.Vector3()).applyMatrix4(this.camera.matrixWorld)
+    const size = bounds.getSize(new THREE.Vector3())
+    const distance = Math.max(60, size.length())
+    const direction = this.camera.position.clone().sub(this.controls.target).normalize()
+    this.controls.target.copy(center)
+    this.camera.position.copy(center).addScaledVector(direction, distance)
+    this.camera.far = distance * 3
+    this.camera.zoom = Math.min(this.controls.maxZoom,
+      (this.camera.right - this.camera.left) / size.x * 0.88,
+      (this.camera.top - this.camera.bottom) / size.y * 0.88)
+    this.controls.minZoom = Math.min(0.02, this.camera.zoom)
+    this.scene.fog = new THREE.Fog(this.colors.sky, distance + size.z, distance * 3)
+    this.camera.updateProjectionMatrix()
+    this.controls.update()
+    this.render()
+  }
+
   setSize(width: number, height: number) {
+    this.viewportHeight = height
     this.renderer.setSize(width, height, false)
     const aspect = width / height
     const viewHeight = Math.max(48, 54 / Math.max(0.35, aspect))
@@ -1183,6 +1195,8 @@ export class ThreeCityScene {
   }
 
   resetView = () => {
+    this.camera.far = 140
+    this.scene.fog = new THREE.Fog(this.colors.sky, 52, 86)
     if (this.viewPreset === 'aerial') {
       this.camera.position.set(27, 48, 34)
       this.camera.zoom = 0.9
@@ -1198,17 +1212,24 @@ export class ThreeCityScene {
   }
 
   render = () => {
+    if (this.labelPixelsPerUnit) {
+      this.labelPixelsPerUnit.value = this.viewportHeight * this.camera.zoom / (this.camera.top - this.camera.bottom)
+    }
     this.renderer.render(this.scene, this.camera)
   }
 
+  private onControlsChange = () => {
+    if (!this.updatingControls) this.render()
+  }
+
   turntableFrame() {
+    this.updatingControls = true
     this.controls.update()
+    this.updatingControls = false
     this.render()
   }
 
-  dispose() {
-    this.controls.removeEventListener('change', this.render)
-    this.controls.dispose()
+  clearEffects() {
     while (this.trailEffects.length) {
       const effect = this.trailEffects.pop()
       if (effect) this.disposeTrailEffect(effect)
@@ -1217,10 +1238,23 @@ export class ThreeCityScene {
       const effect = this.burstEffects.pop()
       if (effect) this.disposeLaserBurstEffect(effect)
     }
+    for (const worker of this.workers) {
+      worker.action = null
+      worker.bot.visible = false
+      worker.route.visible = false
+    }
+    this.lastSpawnedSha = null
+  }
+
+  dispose() {
+    this.controls.removeEventListener('change', this.onControlsChange)
+    this.controls.dispose()
+    this.clearEffects()
     const geometries = new Set<THREE.BufferGeometry>()
     const materials = new Set<THREE.Material>()
     const textures = new Set<THREE.Texture>()
     this.scene.traverse((object) => {
+      if (object instanceof THREE.InstancedMesh) object.dispose()
       if (!(object instanceof THREE.Mesh || object instanceof THREE.Line || object instanceof THREE.LineSegments)) return
       geometries.add(object.geometry)
       const objectMaterials = Array.isArray(object.material) ? object.material : [object.material]

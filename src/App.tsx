@@ -2,14 +2,15 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import {
   buildCityLayout,
   firstAppearanceByPath,
+  createReplayReader,
   reconstruct,
-  reconstructPair,
   type CityLayoutMode,
   type Replay,
   type ReplayEvent,
 } from './city/model'
 import type { CameraPreset, ThreeCityScene, ThreeSceneColors } from './city/threeScene'
 import { buildFinalLocMarkdown, finalLocMarkdownFilename } from './markdownReport'
+import { HistoryTimeline } from './HistoryTimeline'
 
 type Speed = 'inspect' | 'fast' | 'timelapse' | 'turbo' | 'warp' | 'hyper'
 
@@ -169,17 +170,17 @@ async function responseJson<T>(response: Response, url: string): Promise<T> {
   return await new Response(decompressed).json() as T
 }
 
-function useWidth(ref: React.RefObject<HTMLDivElement>) {
+function useWidth(ref: React.RefObject<HTMLCanvasElement>, ready: boolean) {
   const [width, setWidth] = useState(1100)
   useEffect(() => {
     const node = ref.current
     if (!node) return
-    const update = () => setWidth(Math.max(300, node.clientWidth))
+    const update = () => setWidth(Math.max(1, node.clientWidth))
     update()
     const observer = new ResizeObserver(update)
     observer.observe(node)
     return () => observer.disconnect()
-  }, [ref])
+  }, [ref, ready])
   return width
 }
 
@@ -208,11 +209,10 @@ function sceneColors(canvas: HTMLCanvasElement): ThreeSceneColors {
   }
 }
 
+const compactNumber = new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 })
+const standardNumber = new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 })
 function formatNumber(value: number) {
-  return new Intl.NumberFormat(undefined, {
-    notation: Math.abs(value) >= 1000 ? 'compact' : 'standard',
-    maximumFractionDigits: 1,
-  }).format(Math.round(value))
+  return (Math.abs(value) >= 1000 ? compactNumber : standardNumber).format(Math.round(value))
 }
 
 function eventFileStats(replay: Replay, event: ReplayEvent | undefined) {
@@ -235,15 +235,14 @@ function reducedMotion() {
 }
 
 export default function App() {
-  const wrapRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const sceneRef = useRef<ThreeCityScene | null>(null)
-  const width = useWidth(wrapRef)
-  const height = width < 640 ? 560 : Math.min(760, Math.max(620, width * 0.64))
   const [config, setConfig] = useState<RepoCityConfig>(FALLBACK_CONFIG)
   const [demos, setDemos] = useState<Demo[]>([])
   const [activeDemoId, setActiveDemoId] = useState('')
   const [replay, setReplay] = useState<Replay | null>(null)
+  const width = useWidth(canvasRef, Boolean(replay))
+  const height = width < 640 ? Math.max(340, width * 1.05) : Math.min(700, Math.max(480, width * 0.52))
   const [eventIndex, setEventIndex] = useState(0)
   const [playing, setPlaying] = useState(false)
   const [speed, setSpeed] = useState<Speed>(FALLBACK_CONFIG.city.speed)
@@ -284,7 +283,7 @@ export default function App() {
         setNeighborhoodDepth(nextConfig.city.neighborhoodDepth)
         setCameraPreset(nextConfig.city.camera)
         setBlockLines(nextConfig.city.blockLines)
-        setAutoTurn(nextConfig.city.autoRotate)
+        setAutoTurn(nextConfig.city.autoRotate && !reducedMotion())
         setDemos(catalog.demos)
         const dataset = requestedDataset()
         const selectedDemo = catalog.demos.find((demo) => demo.id === dataset)
@@ -322,10 +321,8 @@ export default function App() {
     () => replay ? firstAppearanceByPath(replay.events, replay.paths.length) : null,
     [replay],
   )
-  const replayState = useMemo(
-    () => replay ? reconstructPair(replay, eventIndex) : null,
-    [eventIndex, replay],
-  )
+  const readReplay = useMemo(() => replay ? createReplayReader(replay) : null, [replay])
+  const replayState = useMemo(() => readReplay?.(eventIndex) ?? null, [eventIndex, readReplay])
   const event = replay?.events[eventIndex]
   const activeDemo = useMemo(
     () => demos.find((demo) => demo.id === activeDemoId),
@@ -373,38 +370,55 @@ export default function App() {
 
   useEffect(() => {
     const scene = sceneRef.current
-    if (!scene || !replay || !event || !replayState) return
+    if (playing || !scene || !replay || !event || !replayState) return
     const { before, after } = replayState
+    scene.beginEvent(before, after, event, eventIndex, blockLines, 0, false)
+    scene.updateEvent(1)
+    setHover((current) => current && scene.isPathVisible(current.pathId) ? {
+      ...current,
+      lines: scene.linesForPath(current.pathId),
+      blocks: scene.linesForPath(current.pathId) / blockLines,
+    } : null)
+    scene.render()
+  }, [blockLines, event, eventIndex, playing, replay, replayState, sceneVersion])
+
+  useEffect(() => {
+    const scene = sceneRef.current
+    if (!playing || !scene || !replay) return
+    const read = createReplayReader(replay)
     const showWorkers = speed === 'inspect' || speed === 'fast' || speed === 'timelapse'
-    const effectDelay = playing && showWorkers ? DURATION[speed] * 0.68 : 0
-    scene.beginEvent(
-      before,
-      after,
-      event,
-      eventIndex,
-      blockLines,
-      playing && !reducedMotion() ? EFFECT_DURATION : 0,
-      showWorkers,
-      DETAILED_EFFECTS[speed],
-      effectDelay,
-    )
-    if (!playing) {
-      scene.updateEvent(1)
-      setHover((current) => current && scene.isPathVisible(current.pathId) ? {
-          ...current,
-          lines: scene.linesForPath(current.pathId),
-          blocks: scene.linesForPath(current.pathId) / blockLines,
-        } : null)
-      scene.render()
-      return
+    const duration = DURATION[speed]
+    let index = eventIndex
+    const begin = () => {
+      const { before, after } = read(index)
+      scene.beginEvent(before, after, replay.events[index], index, blockLines,
+        reducedMotion() ? 0 : EFFECT_DURATION, showWorkers, DETAILED_EFFECTS[speed],
+        showWorkers ? duration * 0.68 : 0)
     }
-    const started = performance.now()
+    begin()
+    let previousTime = performance.now()
+    let elapsed = 0
     let frame = 0
-    let advanced = false
     let lastHoverUpdate = 0
     const draw = (now: number) => {
-      const progress = Math.min(1, (now - started) / DURATION[speed])
-      scene.updateEvent(progress)
+      // Do not accumulate background-tab time or create unbounded catch-up work.
+      elapsed += document.hidden ? 0 : Math.min(100, now - previousTime)
+      previousTime = now
+      while (elapsed >= duration) {
+        scene.updateEvent(1)
+        elapsed -= duration
+        if (index >= replay.events.length - 1) {
+          setEventIndex(index)
+          setPlaying(false)
+          scene.tickEffects(now)
+          scene.render()
+          return
+        }
+        index += 1
+        begin()
+      }
+      scene.updateEvent(elapsed / duration)
+      setEventIndex(index)
       if (now - lastHoverUpdate > 80) {
         lastHoverUpdate = now
         setHover((current) => current && scene.isPathVisible(current.pathId) ? {
@@ -415,20 +429,12 @@ export default function App() {
       }
       scene.tickEffects(now)
       scene.turntableFrame()
-      if (progress < 1) {
-        frame = requestAnimationFrame(draw)
-      } else if (!advanced) {
-        advanced = true
-        if (eventIndex < replay.events.length - 1) {
-          setEventIndex((current) => current === eventIndex ? current + 1 : current)
-        } else {
-          setPlaying(false)
-        }
-      }
+      frame = requestAnimationFrame(draw)
     }
     frame = requestAnimationFrame(draw)
     return () => cancelAnimationFrame(frame)
-  }, [blockLines, event, eventIndex, playing, replay, replayState, sceneVersion, speed])
+    // eventIndex is the starting cursor, not a dependency: the clock owns advancement.
+  }, [blockLines, playing, replay, sceneVersion, speed])
 
   useEffect(() => {
     if (!sceneVersion || playing) return
@@ -477,6 +483,7 @@ export default function App() {
   }
 
   const handlePointerMove = (pointerEvent: React.PointerEvent<HTMLCanvasElement>) => {
+    if (pointerEvent.buttons) { clearHover(); return }
     const scene = sceneRef.current
     if (!scene) return
     const rect = pointerEvent.currentTarget.getBoundingClientRect()
@@ -503,8 +510,17 @@ export default function App() {
     setPlaying(true)
   }
 
+  const seekTo = (index: number) => {
+    setPlaying(false)
+    sceneRef.current?.clearEffects()
+    sceneRef.current?.render()
+    setEventIndex(index)
+  }
+
   const cssTheme = {
     '--accent': config.theme.accent,
+    '--addition': config.theme.add,
+    '--removal': config.theme.remove,
     '--city3-source': config.theme.source,
     '--city3-test': config.theme.test,
     '--city3-empty': config.theme.deleted,
@@ -546,28 +562,29 @@ export default function App() {
           <dl className="repo-summary">
             <div><dt>Repository</dt><dd>{replay.repo}</dd></div>
             <div><dt>Commits</dt><dd>{formatNumber(replay.events.length)}</dd></div>
-            <div><dt>Source + test LOC</dt><dd>{formatNumber(currentLines)}</dd></div>
-            <div><dt>Fixtures/generated outside city</dt><dd>{formatNumber(excludedLoc)} LOC</dd></div>
+            <div><dt>Current source + test LOC</dt><dd>{formatNumber(currentLines)}</dd></div>
+            <div><dt>Final fixtures/generated · outside city</dt><dd>{formatNumber(excludedLoc)} LOC</dd></div>
           </dl>
         ) : null}
       </header>
 
-      <section ref={wrapRef} className="city-shell">
+      <section className="city-shell">
         <div className="controls" aria-label="RepoCity controls">
           <div className="control-group">
             <span>View</span>
             {([['aerial', 'Aerial'], ['isometric', 'Isometric']] as [CameraPreset, string][]).map(([value, label]) => (
-              <button key={value} className={cameraPreset === value ? 'active' : ''} onClick={() => setCameraPreset(value)}>{label}</button>
+              <button key={value} aria-pressed={cameraPreset === value} className={cameraPreset === value ? 'active' : ''} onClick={() => setCameraPreset(value)}>{label}</button>
             ))}
             <button aria-label="Zoom out" onClick={() => sceneRef.current?.zoomBy(0.82)}>−</button>
             <button aria-label="Zoom in" onClick={() => sceneRef.current?.zoomBy(1.22)}>+</button>
-            <button className={autoTurn ? 'active' : ''} onClick={() => setAutoTurn((current) => !current)}>Turntable</button>
+            <button aria-pressed={autoTurn} className={autoTurn ? 'active' : ''} onClick={() => setAutoTurn((current) => !current)}>Turntable</button>
             <button onClick={() => sceneRef.current?.resetView()}>Reset</button>
+            <button onClick={() => sceneRef.current?.fitView()}>Fit skyline</button>
           </div>
           <div className="control-group">
             <span>Layout</span>
             {LAYOUTS.map(({ value, label }) => (
-              <button key={value} className={layoutMode === value ? 'active' : ''} onClick={() => { setPlaying(false); setLayoutMode(value) }}>{label}</button>
+              <button key={value} aria-pressed={layoutMode === value} className={layoutMode === value ? 'active' : ''} onClick={() => { setPlaying(false); setLayoutMode(value) }}>{label}</button>
             ))}
           </div>
           <label className="select-control">
@@ -614,7 +631,7 @@ export default function App() {
 
         {replay && event ? (
           <>
-            <div className="commit-status" aria-live="polite">
+            <div className="commit-status" aria-live={playing ? 'off' : 'polite'}>
               <div>
                 <span>{new Date(event.committedAt).toLocaleDateString(undefined, { dateStyle: 'medium' })}</span>
                 <strong>{event.subject}</strong>
@@ -651,18 +668,21 @@ export default function App() {
                   )}
                 </div>
               ) : null}
-              <div className="legend" aria-hidden="true">
+              <div className="legend">
                 <span className="source">source</span>
                 <span className="test">tests</span>
                 <span className="deleted">deleted</span>
                 <span className="add">add</span>
                 <span className="remove">remove</span>
+                <span className="height-key">1 block = {blockLines} LOC</span>
               </div>
               {!sceneVersion && !error ? <div className="loading">Starting WebGL city…</div> : null}
               {error ? <div className="loading error">{error}</div> : null}
             </div>
+            <HistoryTimeline replay={replay} eventIndex={eventIndex} onSeek={seekTo} />
             <div className="scrubber">
               <div className="scrubber-actions">
+                <button aria-label="First commit" onClick={() => seekTo(0)}>First</button>
                 <button
                   className="playback-button"
                   aria-pressed={playing}
@@ -670,6 +690,7 @@ export default function App() {
                 >
                   {playing ? 'Pause' : 'Play'}
                 </button>
+                <button aria-label="Final commit" onClick={() => seekTo(replay.events.length - 1)}>Final</button>
               </div>
               <input
                 aria-label="Replay commit"
@@ -677,7 +698,8 @@ export default function App() {
                 min={0}
                 max={replay.events.length - 1}
                 value={eventIndex}
-                onChange={(change) => { setPlaying(false); setEventIndex(Number(change.target.value)) }}
+                aria-valuetext={`Commit ${eventIndex + 1} of ${replay.events.length}: ${event.subject}`}
+                onChange={(change) => seekTo(Number(change.target.value))}
               />
               <span>{eventIndex + 1} / {replay.events.length}</span>
             </div>
@@ -685,7 +707,7 @@ export default function App() {
               <div className="control-group">
                 <span>Speed</span>
                 {SPEEDS.map(([value, label]) => (
-                  <button key={value} className={speed === value ? 'active' : ''} onClick={() => setSpeed(value)}>{label}</button>
+                  <button key={value} aria-pressed={speed === value} className={speed === value ? 'active' : ''} onClick={() => setSpeed(value)}>{label}</button>
                 ))}
               </div>
             </div>

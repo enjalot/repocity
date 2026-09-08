@@ -294,10 +294,18 @@ export function applyEvent(loc: Float64Array, event: ReplayEvent) {
 export function reconstruct(replay: Replay, eventIndex: number) {
   const loc = new Float64Array(replay.paths.length)
   if (eventIndex < 0) return loc
+  eventIndex = Math.min(eventIndex, replay.events.length - 1)
   let start = 0
-  for (const [checkpointIndex, values] of replay.checkpoints) {
-    if (checkpointIndex > eventIndex) break
-    loc.fill(0)
+  // Find the last usable snapshot without materializing every earlier one.
+  let low = 0
+  let high = replay.checkpoints.length
+  while (low < high) {
+    const middle = (low + high) >>> 1
+    if (replay.checkpoints[middle][0] <= eventIndex) low = middle + 1
+    else high = middle
+  }
+  if (low > 0) {
+    const [checkpointIndex, values] = replay.checkpoints[low - 1]
     for (const [pathId, lines] of values) loc[pathId] = lines
     start = checkpointIndex + 1
   }
@@ -313,6 +321,24 @@ export function reconstructPair(replay: Replay, eventIndex: number) {
   const event = replay.events[eventIndex]
   if (event) applyEvent(after, event)
   return { before, after }
+}
+
+/** Sequential reads reuse the previous result; returned snapshots stay immutable. */
+export function createReplayReader(replay: Replay) {
+  let previousIndex = -2
+  let previous: ReturnType<typeof reconstructPair> | null = null
+  return (eventIndex: number) => {
+    if (previous && previousIndex === eventIndex) return previous
+    const before = previous && previousIndex === eventIndex - 1
+      ? previous.after
+      : reconstruct(replay, eventIndex - 1)
+    const after = new Float64Array(before)
+    const event = replay.events[eventIndex]
+    if (event) applyEvent(after, event)
+    previousIndex = eventIndex
+    previous = { before, after }
+    return previous
+  }
 }
 
 export function pointOnRoute(route: Point[], distanceFraction: number): Point {
@@ -340,8 +366,17 @@ export function cityDeltas(
   layout: CityLayout,
   before: Float64Array,
   after: Float64Array,
+  event?: ReplayEvent,
 ) {
-  return layout.lots
+  const touched = new Set<number>()
+  for (const [pathId, , , status, oldPathId] of event?.changes ?? []) {
+    touched.add(pathId)
+    if (status === 4 && oldPathId >= 0) touched.add(oldPathId)
+  }
+  const lots = event
+    ? [...touched].flatMap((id) => { const lot = layout.lotByPath.get(id); return lot ? [lot] : [] })
+    : layout.lots
+  return lots
     .map((lot) => ({ lot, before: before[lot.pathId] ?? 0, after: after[lot.pathId] ?? 0 }))
     .filter((change) => change.before !== change.after)
     .sort((a, b) => Math.abs(b.after - b.before) - Math.abs(a.after - a.before))
