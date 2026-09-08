@@ -20,6 +20,8 @@ Use **Export → Final LOCs (.md)** to download a Markdown table of up to 1,000 
 
 Use **First** and **Final** to jump to the replay endpoints, or click/drag the history overview to seek. Cyan bars show source/test additions and pink bars show removals on a shared logarithmic LOC scale. Bars group consecutive commits; their spacing represents commit order, not elapsed calendar time. **Fit skyline** frames the current buildings, including unusually tall files; **Reset** restores the selected camera preset. District labels become visible as you zoom in far enough to read them.
 
+The city, histogram, replay slider, and speed controls share one viewport. Repository stats, the current commit, and city settings sit in a right-hand column on desktop and below the replay on narrow screens. Explanatory notes and the Markdown export are below the main view.
+
 To keep several generated cities available from one dev server, give each replay a short filename and select it with `?dataset=NAME`:
 
 ```bash

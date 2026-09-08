@@ -239,6 +239,32 @@ try {
   await page.waitForTimeout(150)
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
   await page.locator('.city-shell').screenshot({ path: `${artifacts}/mobile.png` })
+  // The city and transport must remain visible together without page scrolling.
+  for (const [width, height] of [[1366, 768], [1280, 720], [1024, 600], [390, 844], [320, 568], [844, 390]]) {
+    await page.setViewportSize({ width, height })
+    await page.evaluate(() => scrollTo(0, 0))
+    await page.waitForTimeout(100)
+    const layout = await page.evaluate(() => {
+      const bounds = (selector) => {
+        const { top, bottom, left, right } = document.querySelector(selector).getBoundingClientRect()
+        return { top, bottom, left, right }
+      }
+      const canvas = document.querySelector('canvas')
+      return {
+        elements: ['.stage', '.history-overview', '.playback-button', '.scrubber input', '.speed-controls'].map(bounds),
+        sidebar: bounds('.city-sidebar'),
+        buffer: [canvas.width, canvas.height], display: [canvas.clientWidth, canvas.clientHeight],
+        overflow: document.documentElement.scrollWidth > innerWidth,
+      }
+    })
+    assert.ok(layout.elements.every(({ top, bottom }) => top >= 0 && bottom <= height),
+      `city and playback controls fit ${width}x${height}`)
+    assert.equal(layout.overflow, false)
+    assert.deepEqual(layout.buffer, layout.display, 'canvas follows both available width and height')
+    if (width > 860) assert.ok(layout.sidebar.left >= layout.elements[0].right)
+    else assert.ok(layout.sidebar.top >= layout.elements.at(-1).bottom)
+  }
+  await page.setViewportSize({ width: 390, height: 844 })
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.getByRole('button', { name: 'First commit', exact: true }).click()
   await page.getByRole('button', { name: '1×', exact: true }).click()

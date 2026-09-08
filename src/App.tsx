@@ -170,18 +170,22 @@ async function responseJson<T>(response: Response, url: string): Promise<T> {
   return await new Response(decompressed).json() as T
 }
 
-function useWidth(ref: React.RefObject<HTMLCanvasElement>, ready: boolean) {
-  const [width, setWidth] = useState(1100)
+function useCanvasSize(ref: React.RefObject<HTMLCanvasElement>, ready: boolean) {
+  const [size, setSize] = useState({ width: 1100, height: 600 })
   useEffect(() => {
     const node = ref.current
     if (!node) return
-    const update = () => setWidth(Math.max(1, node.clientWidth))
+    const update = () => {
+      const width = Math.max(1, node.clientWidth)
+      const height = Math.max(1, node.clientHeight)
+      setSize((current) => current.width === width && current.height === height ? current : { width, height })
+    }
     update()
     const observer = new ResizeObserver(update)
     observer.observe(node)
     return () => observer.disconnect()
   }, [ref, ready])
-  return width
+  return size
 }
 
 function cssValue(style: CSSStyleDeclaration, name: string) {
@@ -241,8 +245,7 @@ export default function App() {
   const [demos, setDemos] = useState<Demo[]>([])
   const [activeDemoId, setActiveDemoId] = useState('')
   const [replay, setReplay] = useState<Replay | null>(null)
-  const width = useWidth(canvasRef, Boolean(replay))
-  const height = width < 640 ? Math.max(340, width * 1.05) : Math.min(700, Math.max(480, width * 0.52))
+  const { width, height } = useCanvasSize(canvasRef, Boolean(replay))
   const [eventIndex, setEventIndex] = useState(0)
   const [playing, setPlaying] = useState(false)
   const [speed, setSpeed] = useState<Speed>(FALLBACK_CONFIG.city.speed)
@@ -536,21 +539,260 @@ export default function App() {
 
   return (
     <main className="app" style={cssTheme}>
-      <header className="page-header">
-        <div>
-          <span className="eyebrow">Git history, rendered</span>
-          <h1>{config.title}</h1>
-          <p>{config.subtitle}</p>
-          {demos.length ? (
-            <label className="demo-picker">
-              Demo
-              <select value={activeDemoId} onChange={(change) => chooseDemo(change.target.value)}>
-                {demos.map((demo) => (
-                  <option key={demo.id} value={demo.id}>{demo.label}</option>
-                ))}
-              </select>
-            </label>
+      <div className="workspace">
+        <section className="city-shell" aria-label="City replay">
+          <header className="page-header">
+            <h1>{config.title}</h1>
+            {demos.length ? (
+              <label className="demo-picker">
+                Demo
+                <select value={activeDemoId} onChange={(change) => chooseDemo(change.target.value)}>
+                  {demos.map((demo) => (
+                    <option key={demo.id} value={demo.id}>
+                      {demo.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+          </header>
+          {replay && event ? (
+            <>
+              <div className="stage">
+                <canvas
+                  ref={canvasRef}
+                  role="img"
+                  aria-label={`Rotatable three-dimensional code city for ${replay.repo}. ${formatNumber(currentLines)} source and test lines are present.`}
+                  onPointerMove={handlePointerMove}
+                  onPointerLeave={clearHover}
+                />
+                <div className="hint">drag to orbit · wheel/pinch to zoom · hover any building</div>
+                {hover ? (
+                  <div className="tooltip" style={{ left: hover.x, top: hover.y }}>
+                    <strong>{hover.path}</strong>
+                    {hover.lines > 0 ? (
+                      <>
+                        <span>
+                          {hover.category} · {formatNumber(hover.lines)} lines
+                        </span>
+                        <span>{hover.blocks.toFixed(2)} blocks at this setting</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>deleted</span>
+                        <span>
+                          {hover.category} · historical peak {formatNumber(hover.peakLoc)} lines
+                        </span>
+                      </>
+                    )}
+                  </div>
+                ) : null}
+                <div className="legend">
+                  <span className="source">source</span>
+                  <span className="test">tests</span>
+                  <span className="deleted">deleted</span>
+                  <span className="add">add</span>
+                  <span className="remove">remove</span>
+                  <span className="height-key">1 block = {blockLines} LOC</span>
+                </div>
+                {!sceneVersion && !error ? (
+                  <div className="loading">Starting WebGL city…</div>
+                ) : null}
+                {error ? <div className="loading error">{error}</div> : null}
+              </div>
+              <div className="transport">
+                <HistoryTimeline replay={replay} eventIndex={eventIndex} onSeek={seekTo} />
+                <div className="scrubber">
+                  <div className="scrubber-actions">
+                    <button aria-label="First commit" onClick={() => seekTo(0)}>
+                      First
+                    </button>
+                    <button
+                      className="playback-button"
+                      aria-pressed={playing}
+                      onClick={() => (playing ? setPlaying(false) : play())}
+                    >
+                      {playing ? 'Pause' : 'Play'}
+                    </button>
+                    <button
+                      aria-label="Final commit"
+                      onClick={() => seekTo(replay.events.length - 1)}
+                    >
+                      Final
+                    </button>
+                  </div>
+                  <input
+                    aria-label="Replay commit"
+                    type="range"
+                    min={0}
+                    max={replay.events.length - 1}
+                    value={eventIndex}
+                    aria-valuetext={`Commit ${eventIndex + 1} of ${replay.events.length}: ${event.subject}`}
+                    onChange={(change) => seekTo(Number(change.target.value))}
+                  />
+                  <span>
+                    {eventIndex + 1} / {replay.events.length}
+                  </span>
+                </div>
+                <div className="speed-controls">
+                  <div className="control-group">
+                    <span>Speed</span>
+                    {SPEEDS.map(([value, label]) => (
+                      <button
+                        key={value}
+                        aria-pressed={speed === value}
+                        className={speed === value ? 'active' : ''}
+                        onClick={() => setSpeed(value)}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="empty-state">{error ?? 'Loading replay data…'}</div>
+          )}
+        </section>
+
+        <aside className="city-sidebar" aria-label="Repository and view settings">
+          <section className="sidebar-section">
+            <h2>Repository</h2>
+            {replay ? (
+              <dl className="repo-summary">
+                <div>
+                  <dt>Repository</dt>
+                  <dd>{replay.repo}</dd>
+                </div>
+                <div>
+                  <dt>Commits</dt>
+                  <dd>{formatNumber(replay.events.length)}</dd>
+                </div>
+                <div>
+                  <dt>Current source + test LOC</dt>
+                  <dd>{formatNumber(currentLines)}</dd>
+                </div>
+                <div>
+                  <dt>Final fixtures/generated · outside city</dt>
+                  <dd>{formatNumber(excludedLoc)} LOC</dd>
+                </div>
+              </dl>
+            ) : null}
+          </section>
+          {replay && event ? (
+            <section className="sidebar-section">
+              <h2>
+                Current commit{' '}
+                <span>
+                  {eventIndex + 1} / {replay.events.length}
+                </span>
+              </h2>
+              <div className="commit-status" aria-live={playing ? 'off' : 'polite'}>
+                <div>
+                  <span>
+                    {new Date(event.committedAt).toLocaleDateString(undefined, {
+                      dateStyle: 'medium',
+                    })}
+                  </span>
+                  <strong>{event.subject}</strong>
+                </div>
+                <div>
+                  {author} · {event.authorship} · {fileStats.files} city files ·{' '}
+                  <span className="addition">+{formatNumber(fileStats.additions)}</span>{' '}
+                  <span className="removal">−{formatNumber(fileStats.removals)}</span>
+                </div>
+              </div>
+            </section>
           ) : null}
+          <section className="sidebar-section">
+            <h2>City settings</h2>
+            <div className="controls" aria-label="RepoCity controls">
+              <div className="control-group">
+                <span>View</span>
+                {(
+                  [
+                    ['aerial', 'Aerial'],
+                    ['isometric', 'Isometric'],
+                  ] as [CameraPreset, string][]
+                ).map(([value, label]) => (
+                  <button
+                    key={value}
+                    aria-pressed={cameraPreset === value}
+                    className={cameraPreset === value ? 'active' : ''}
+                    onClick={() => setCameraPreset(value)}
+                  >
+                    {label}
+                  </button>
+                ))}
+                <button aria-label="Zoom out" onClick={() => sceneRef.current?.zoomBy(0.82)}>
+                  −
+                </button>
+                <button aria-label="Zoom in" onClick={() => sceneRef.current?.zoomBy(1.22)}>
+                  +
+                </button>
+                <button
+                  aria-pressed={autoTurn}
+                  className={autoTurn ? 'active' : ''}
+                  onClick={() => setAutoTurn((current) => !current)}
+                >
+                  Turntable
+                </button>
+                <button onClick={() => sceneRef.current?.resetView()}>Reset</button>
+                <button onClick={() => sceneRef.current?.fitView()}>Fit skyline</button>
+              </div>
+              <div className="control-group">
+                <span>Layout</span>
+                {LAYOUTS.map(({ value, label }) => (
+                  <button
+                    key={value}
+                    aria-pressed={layoutMode === value}
+                    className={layoutMode === value ? 'active' : ''}
+                    onClick={() => {
+                      setPlaying(false)
+                      setLayoutMode(value)
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <label className="select-control">
+                Neighborhoods
+                <select
+                  aria-label="Neighborhood folder depth"
+                  value={neighborhoodDepth}
+                  onChange={(change) => {
+                    setPlaying(false)
+                    setNeighborhoodDepth(Number(change.target.value))
+                  }}
+                >
+                  <option value={1}>1 folder deep</option>
+                  <option value={2}>2 folders deep</option>
+                  <option value={3}>3 folders deep</option>
+                </select>
+              </label>
+              <label className="select-control">
+                Lines / block
+                <select
+                  value={blockLines}
+                  onChange={(change) => setBlockLines(Number(change.target.value))}
+                >
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                  <option value={250}>250</option>
+                  <option value={500}>500</option>
+                </select>
+              </label>
+            </div>
+          </section>
+        </aside>
+      </div>
+
+      <section className="replay-details" aria-label="About this replay">
+        <div>
+          <h2>About this replay</h2>
+          <p>{config.subtitle}</p>
           {activeDemo ? (
             <div className="demo-note">
               {activeDemo.description}{' '}
@@ -558,59 +800,12 @@ export default function App() {
             </div>
           ) : null}
         </div>
-        {replay ? (
-          <dl className="repo-summary">
-            <div><dt>Repository</dt><dd>{replay.repo}</dd></div>
-            <div><dt>Commits</dt><dd>{formatNumber(replay.events.length)}</dd></div>
-            <div><dt>Current source + test LOC</dt><dd>{formatNumber(currentLines)}</dd></div>
-            <div><dt>Final fixtures/generated · outside city</dt><dd>{formatNumber(excludedLoc)} LOC</dd></div>
-          </dl>
-        ) : null}
-      </header>
-
-      <section className="city-shell">
-        <div className="controls" aria-label="RepoCity controls">
-          <div className="control-group">
-            <span>View</span>
-            {([['aerial', 'Aerial'], ['isometric', 'Isometric']] as [CameraPreset, string][]).map(([value, label]) => (
-              <button key={value} aria-pressed={cameraPreset === value} className={cameraPreset === value ? 'active' : ''} onClick={() => setCameraPreset(value)}>{label}</button>
-            ))}
-            <button aria-label="Zoom out" onClick={() => sceneRef.current?.zoomBy(0.82)}>−</button>
-            <button aria-label="Zoom in" onClick={() => sceneRef.current?.zoomBy(1.22)}>+</button>
-            <button aria-pressed={autoTurn} className={autoTurn ? 'active' : ''} onClick={() => setAutoTurn((current) => !current)}>Turntable</button>
-            <button onClick={() => sceneRef.current?.resetView()}>Reset</button>
-            <button onClick={() => sceneRef.current?.fitView()}>Fit skyline</button>
-          </div>
-          <div className="control-group">
-            <span>Layout</span>
-            {LAYOUTS.map(({ value, label }) => (
-              <button key={value} aria-pressed={layoutMode === value} className={layoutMode === value ? 'active' : ''} onClick={() => { setPlaying(false); setLayoutMode(value) }}>{label}</button>
-            ))}
-          </div>
-          <label className="select-control">
-            Neighborhoods
-            <select
-              aria-label="Neighborhood folder depth"
-              value={neighborhoodDepth}
-              onChange={(change) => {
-                setPlaying(false)
-                setNeighborhoodDepth(Number(change.target.value))
-              }}
-            >
-              <option value={1}>1 folder deep</option>
-              <option value={2}>2 folders deep</option>
-              <option value={3}>3 folders deep</option>
-            </select>
-          </label>
-          <label className="select-control">
-            Lines / block
-            <select value={blockLines} onChange={(change) => setBlockLines(Number(change.target.value))}>
-              <option value={50}>50</option>
-              <option value={100}>100</option>
-              <option value={250}>250</option>
-              <option value={500}>500</option>
-            </select>
-          </label>
+        <div>
+          <h2>Reading the city</h2>
+          <p className="layout-note">
+            {layoutNote} Neighborhoods group files by their first {neighborhoodDepth}{' '}
+            {neighborhoodDepth === 1 ? 'folder' : 'folders'} without changing replay data.
+          </p>
           {replay ? (
             <div className="control-group">
               <span>Export</span>
@@ -624,97 +819,6 @@ export default function App() {
             </div>
           ) : null}
         </div>
-        <p className="layout-note">
-          {layoutNote} Neighborhoods group files by their first {neighborhoodDepth}{' '}
-          {neighborhoodDepth === 1 ? 'folder' : 'folders'} without changing replay data.
-        </p>
-
-        {replay && event ? (
-          <>
-            <div className="commit-status" aria-live={playing ? 'off' : 'polite'}>
-              <div>
-                <span>{new Date(event.committedAt).toLocaleDateString(undefined, { dateStyle: 'medium' })}</span>
-                <strong>{event.subject}</strong>
-              </div>
-              <div>
-                {author} · {event.authorship} · {fileStats.files} city files ·{' '}
-                <span className="addition">+{formatNumber(fileStats.additions)}</span>{' '}
-                <span className="removal">−{formatNumber(fileStats.removals)}</span>
-              </div>
-            </div>
-            <div className="stage">
-              <canvas
-                ref={canvasRef}
-                style={{ height }}
-                role="img"
-                aria-label={`Rotatable three-dimensional code city for ${replay.repo}. ${formatNumber(currentLines)} source and test lines are present.`}
-                onPointerMove={handlePointerMove}
-                onPointerLeave={clearHover}
-              />
-              <div className="hint">drag to orbit · wheel/pinch to zoom · hover any building</div>
-              {hover ? (
-                <div className="tooltip" style={{ left: hover.x, top: hover.y }}>
-                  <strong>{hover.path}</strong>
-                  {hover.lines > 0 ? (
-                    <>
-                      <span>{hover.category} · {formatNumber(hover.lines)} lines</span>
-                      <span>{hover.blocks.toFixed(2)} blocks at this setting</span>
-                    </>
-                  ) : (
-                    <>
-                      <span>deleted</span>
-                      <span>{hover.category} · historical peak {formatNumber(hover.peakLoc)} lines</span>
-                    </>
-                  )}
-                </div>
-              ) : null}
-              <div className="legend">
-                <span className="source">source</span>
-                <span className="test">tests</span>
-                <span className="deleted">deleted</span>
-                <span className="add">add</span>
-                <span className="remove">remove</span>
-                <span className="height-key">1 block = {blockLines} LOC</span>
-              </div>
-              {!sceneVersion && !error ? <div className="loading">Starting WebGL city…</div> : null}
-              {error ? <div className="loading error">{error}</div> : null}
-            </div>
-            <HistoryTimeline replay={replay} eventIndex={eventIndex} onSeek={seekTo} />
-            <div className="scrubber">
-              <div className="scrubber-actions">
-                <button aria-label="First commit" onClick={() => seekTo(0)}>First</button>
-                <button
-                  className="playback-button"
-                  aria-pressed={playing}
-                  onClick={() => playing ? setPlaying(false) : play()}
-                >
-                  {playing ? 'Pause' : 'Play'}
-                </button>
-                <button aria-label="Final commit" onClick={() => seekTo(replay.events.length - 1)}>Final</button>
-              </div>
-              <input
-                aria-label="Replay commit"
-                type="range"
-                min={0}
-                max={replay.events.length - 1}
-                value={eventIndex}
-                aria-valuetext={`Commit ${eventIndex + 1} of ${replay.events.length}: ${event.subject}`}
-                onChange={(change) => seekTo(Number(change.target.value))}
-              />
-              <span>{eventIndex + 1} / {replay.events.length}</span>
-            </div>
-            <div className="speed-controls">
-              <div className="control-group">
-                <span>Speed</span>
-                {SPEEDS.map(([value, label]) => (
-                  <button key={value} aria-pressed={speed === value} className={speed === value ? 'active' : ''} onClick={() => setSpeed(value)}>{label}</button>
-                ))}
-              </div>
-            </div>
-          </>
-        ) : (
-          <div className="empty-state">{error ?? 'Loading replay data…'}</div>
-        )}
       </section>
     </main>
   )
