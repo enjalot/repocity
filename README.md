@@ -2,6 +2,8 @@
 
 RepoCity turns a Git repository into a replayable Three.js code city. Files are lots, current lines of code are building height, and every first-parent commit can send robots and add/remove effects to the files it changes.
 
+**[Explore the live demo](https://enjalot.github.io/repocity/)** — or choose a repository from the [examples below](#public-demos-and-github-pages).
+
 It is a standalone Vite + React application. The data builder uses only Git and Python's standard library: no GitHub API, pull-request data, hosted workflow metadata, or article framework is required.
 
 ## Quick start
@@ -80,12 +82,12 @@ python3 scripts/build_replay.py /path/to/monorepo \
 
 The tracked demo catalog includes four deliberately different histories:
 
-| Demo | History represented |
-| --- | --- |
-| [Latent Scope](https://github.com/enjalot/latent-scope) | Full history; compact visualization tool |
-| [Pi](https://github.com/earendil-works/pi) | Full history; medium-sized agent harness |
-| [FastAPI](https://github.com/fastapi/fastapi) | Full history; Python and test-heavy |
-| [React](https://github.com/facebook/react) | Full history; large, long-lived JavaScript monorepo |
+| Repository | Live demo | History represented |
+| --- | --- | --- |
+| [Latent Scope](https://github.com/enjalot/latent-scope) | [Open city](https://enjalot.github.io/repocity/?dataset=latent-scope) | Full history; compact visualization tool |
+| [Pi](https://github.com/earendil-works/pi) | [Open city](https://enjalot.github.io/repocity/?dataset=pi) | Full history; medium-sized agent harness |
+| [FastAPI](https://github.com/fastapi/fastapi) | [Open city](https://enjalot.github.io/repocity/?dataset=fastapi) | Full history; Python and test-heavy |
+| [React](https://github.com/facebook/react) | [Open city](https://enjalot.github.io/repocity/?dataset=react) | Full history; large, long-lived JavaScript monorepo |
 
 Each replay is LOC-validated before packaging. `scripts/package_demo.py` validates the replay shape and creates deterministic gzip data for static hosting:
 
